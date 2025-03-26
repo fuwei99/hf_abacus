@@ -21,6 +21,7 @@ API_ENDPOINT_URL = "https://abacus.ai/api/v0/describeDeployment"
 MODEL_LIST_URL = "https://abacus.ai/api/v0/listExternalApplications"
 CHAT_URL = "https://apps.abacus.ai/api/_chatLLMSendMessageSSE"
 USER_INFO_URL = "https://abacus.ai/api/v0/_getUserInfo"
+COMPUTE_POINTS_URL = "https://apps.abacus.ai/api/_getOrganizationComputePoints"  # 添加计算点API
 
 
 USER_AGENTS = [
@@ -33,6 +34,7 @@ USER_NUM = 0
 USER_DATA = []
 CURRENT_USER = -1
 MODELS = set()
+COMPUTE_POINTS = []  # 存储每个用户的计算点信息
 
 
 TRACE_ID = "3042e28b3abf475d8d973c7e904935af"
@@ -50,6 +52,10 @@ total_tokens = {
     "completion": 0,   # 输出token统计
     "total": 0         # 总token统计
 }
+
+# 缓存计算点信息和最后刷新时间
+cached_compute_points = []
+last_compute_points_refresh = None
 
 
 # HTML模板
@@ -123,6 +129,9 @@ INDEX_HTML = """
         .status-value.warning {
             color: #ffc107;
         }
+        .status-value.error {
+            color: #dc3545;
+        }
         .footer {
             margin-top: 2rem;
             text-align: center;
@@ -183,6 +192,30 @@ INDEX_HTML = """
             font-family: monospace;
             color: #28a745;
         }
+        .compute-points {
+            font-family: monospace;
+            color: #6f42c1;
+            font-weight: bold;
+        }
+        .refresh-btn {
+            background: #0366d6;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: background-color 0.2s;
+            margin-left: 1rem;
+        }
+        .refresh-btn:hover {
+            background: #0056b3;
+        }
+        .refresh-time {
+            font-size: 0.75rem;
+            color: #6c757d;
+            margin-top: 0.25rem;
+        }
         @media (max-width: 768px) {
             .container {
                 padding: 1rem;
@@ -221,6 +254,40 @@ INDEX_HTML = """
                     <span class="model-tag">{{ model }}</span>
                     {% endfor %}
                 </div>
+            </div>
+        </div>
+
+        <h2>💰 计算点余额</h2>
+        <div class="status-card">
+            <table class="usage-table">
+                <thead>
+                    <tr>
+                        <th>用户ID</th>
+                        <th>计算点余额</th>
+                        <th>状态</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for point_info in compute_points %}
+                    <tr>
+                        <td>用户 {{ point_info.user_id }}</td>
+                        <td class="compute-points">{{ point_info.points }}</td>
+                        <td>
+                            {% if point_info.status == 'success' %}
+                            <span class="status-value">正常</span>
+                            {% else %}
+                            <span class="status-value error">{{ point_info.message }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div class="refresh-time">
+                <p>上次刷新时间: {{ refresh_time }}</p>
+                <form method="GET" action="/">
+                    <button type="submit" name="refresh_points" value="true" class="refresh-btn">刷新计算点信息</button>
+                </form>
             </div>
         </div>
 
@@ -488,7 +555,7 @@ def get_model_map(session, cookies, session_token):
 
 def init_session():
     get_password()
-    global USER_NUM, MODELS, USER_DATA
+    global USER_NUM, MODELS, USER_DATA, COMPUTE_POINTS
     config_list = resolve_config()
     user_num = len(config_list)
     all_models = set()
@@ -508,6 +575,7 @@ def init_session():
             model_map, models_set = get_model_map(session, cookies, session_token)
             all_models.update(models_set)
             USER_DATA.append((session, cookies, session_token, conversation_id, model_map))
+            COMPUTE_POINTS.append((cookies, conversation_id))
         except Exception as e:
             print(f"配置用户 {i+1} 失败: {e}")
             continue
@@ -994,7 +1062,11 @@ def index():
         uptime_str = f"{hours}小时 {minutes}分钟"
     else:
         uptime_str = f"{minutes}分钟 {seconds}秒"
-
+    
+    # 获取计算点信息
+    refresh_points = request.args.get('refresh_points') == 'true'
+    compute_points_data = get_compute_points() if refresh_points else get_cached_compute_points()
+    
     return render_template_string(
         INDEX_HTML,
         uptime=uptime_str,
@@ -1003,7 +1075,9 @@ def index():
         models=sorted(list(MODELS)),
         year=datetime.now().year,
         model_stats=model_usage_stats,
-        total_tokens=total_tokens
+        total_tokens=total_tokens,
+        compute_points=compute_points_data,
+        refresh_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
 
 
@@ -1040,6 +1114,113 @@ def update_model_stats(model, prompt_tokens, completion_tokens):
     total_tokens["prompt"] += prompt_tokens
     total_tokens["completion"] += completion_tokens
     total_tokens["total"] += (prompt_tokens + completion_tokens)
+
+
+# 获取计算点信息
+def get_compute_points():
+    global COMPUTE_POINTS
+    compute_points_info = []
+    
+    for i, (cookies, conversation_id) in enumerate(COMPUTE_POINTS):
+        try:
+            # 使用对应的cookies获取用户的session_token
+            session = requests.Session()
+            session_token = refresh_token(session, cookies)
+            
+            if not session_token:
+                compute_points_info.append({
+                    "user_id": i + 1,
+                    "status": "error",
+                    "message": "获取token失败",
+                    "points": 0,
+                    "refreshed_at": datetime.now().isoformat()
+                })
+                continue
+                
+            # 设置请求头
+            trace_id = str(uuid.uuid4()).replace('-', '')
+            sentry_trace = f"{trace_id}-{str(uuid.uuid4())[:16]}"
+            
+            headers = {
+                "accept": "application/json, text/plain, */*",
+                "accept-language": "zh-CN,zh;q=0.9",
+                "baggage": f"sentry-environment=production,sentry-release=93da8385541a6ce339b1f41b0c94428c70657e22,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id},sentry-sample_rate=0.05,sentry-sampled=false",
+                "content-type": "application/json",
+                "reai-ui": "1",
+                "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": "\"Windows\"",
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
+                "sentry-trace": f"{trace_id}-{str(uuid.uuid4())[:16]}-0",
+                "session-token": session_token,
+                "x-abacus-org-host": "apps",
+                "cookie": cookies,
+                "user-agent": random.choice(USER_AGENTS)
+            }
+            
+            # 发送请求获取计算点信息
+            response = session.get(COMPUTE_POINTS_URL, headers=headers)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("success", False):
+                    points_data = result.get("result", {})
+                    compute_points_info.append({
+                        "user_id": i + 1,
+                        "status": "success",
+                        "data": points_data,
+                        "points": points_data.get("currentPoints", 0),
+                        "refreshed_at": datetime.now().isoformat()
+                    })
+                else:
+                    compute_points_info.append({
+                        "user_id": i + 1,
+                        "status": "error",
+                        "message": result.get("error", "未知错误"),
+                        "points": 0,
+                        "refreshed_at": datetime.now().isoformat()
+                    })
+            else:
+                compute_points_info.append({
+                    "user_id": i + 1,
+                    "status": "error",
+                    "message": f"API请求失败: {response.status_code}",
+                    "points": 0,
+                    "refreshed_at": datetime.now().isoformat()
+                })
+                
+        except Exception as e:
+            compute_points_info.append({
+                "user_id": i + 1,
+                "status": "error",
+                "message": f"获取计算点异常: {str(e)}",
+                "points": 0,
+                "refreshed_at": datetime.now().isoformat()
+            })
+    
+    return compute_points_info
+
+
+# 获取缓存的计算点信息，如果缓存不存在或超过30分钟则重新获取
+def get_cached_compute_points():
+    global cached_compute_points, last_compute_points_refresh
+    
+    current_time = datetime.now()
+    
+    # 如果缓存不存在或超过30分钟，重新获取
+    if (last_compute_points_refresh is None or 
+        (current_time - last_compute_points_refresh).total_seconds() > 1800 or
+        not cached_compute_points):
+        
+        cached_compute_points = get_compute_points()
+        last_compute_points_refresh = current_time
+        print("刷新计算点信息")
+    else:
+        print(f"使用缓存的计算点信息，距离上次刷新: {(current_time - last_compute_points_refresh).total_seconds():.0f}秒")
+    
+    return cached_compute_points
 
 
 if __name__ == "__main__":
