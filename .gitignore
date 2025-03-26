@@ -1,0 +1,5 @@
+config.json
+password.txt
+venv/
+__pycache__/
+*.pyc 
