@@ -13,6 +13,12 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 
 # Abacus Chat Proxy
 
+> 📢 本项目基于 [orbitoo/abacus_chat_proxy](https://github.com/orbitoo/abacus_chat_proxy) 改进
+> 
+> 特别感谢 orbitoo 大佬提供的原始项目！
+> 
+> 本项目增加了：Docker部署支持、Hugging Face一键部署、自动保活功能等
+
 一个用于中转API请求的代理服务器。
 
 [![Deploy to Hugging Face Spaces](https://huggingface.co/datasets/huggingface/badges/raw/main/deploy-to-spaces-lg.svg)](https://huggingface.co/spaces/malt666/abacus_chat_proxy?duplicate=true)
