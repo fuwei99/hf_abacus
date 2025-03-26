@@ -14,48 +14,59 @@ if __name__ == "__main__":
             except KeyError:
                 config = None
     if config is None:
-        print(f"Config.json not found or empty, creating...")
+        print(f"配置文件不存在或为空，创建新配置...")
         config = {"config": []}
-        print(f"Enter the conversation id you got: ")
+        print(f"输入会话ID: ")
         user_data = {"conversation_id": input()}
-        print(f"Enter the cookies you got: ")
+        print(f"输入cookies: ")
         user_data["cookies"] = input()
         config["config"].append(user_data)
+    
     again = True
     while True:
         if again:
             num = len(config["config"])
-            print(f"You have {num} cookies in your config.json file.")
+            print(f"\n当前有 {num} 个配置。")
         print("----------")
-        print(f"1. Add")
-        print(f"2. Delete all")
-        print(f"3. Set password")
-        print(f"4. Save and exit")
+        print(f"1. 添加新配置")
+        print(f"2. 删除所有配置")
+        print(f"3. 设置密码")
+        print(f"4. 保存并退出")
         choice = input()
+        
         if choice == "1":
-            print(f"Enter the conversation id you got: ")
+            print(f"输入会话ID: ")
             user_data = {"conversation_id": input()}
-            print(f"Enter the cookies you got: ")
+            print(f"输入cookies: ")
             user_data["cookies"] = input()
             config["config"].append(user_data)
+            print("\n成功添加配置！")
             again = True
+        
         elif choice == "2":
-            config["config"] = []
+            print("确定要删除所有配置吗? (y/n)")
+            if input().lower() == 'y':
+                config["config"] = []
+                print("已删除所有配置")
             again = True
+        
         elif choice == "3":
-            print(f"Enter the password, blank to remove: ")
+            print(f"输入新密码（留空则删除密码）: ")
             password = input()
             with open("password.txt", "w") as f:
                 if password != "":
                     f.write(hashlib.sha256(password.encode()).hexdigest())
-                    print(f"Password set.")
+                    print(f"密码已设置")
                 else:
                     f.write("")
-                    print(f"Password removed.")
+                    print(f"密码已删除")
+        
         elif choice == "4":
             with open("config.json", "w") as f:
                 json.dump(config, f, indent=4)
+            print("配置已保存")
             break
+        
         else:
-            print(f"Invalid choice.")
+            print(f"无效的选择")
             again = False

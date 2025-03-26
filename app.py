@@ -8,24 +8,31 @@ import io
 import re
 from functools import wraps
 import hashlib
+import jwt  
 
 app = Flask(__name__)
 
+
 API_ENDPOINT_URL = "https://abacus.ai/api/v0/describeDeployment"
 MODEL_LIST_URL = "https://abacus.ai/api/v0/listExternalApplications"
-TARGET_URL = "https://pa002.abacus.ai/api/_chatLLMSendMessageSSE"
+CHAT_URL = "https://apps.abacus.ai/api/_chatLLMSendMessageSSE"
+USER_INFO_URL = "https://abacus.ai/api/v0/_getUserInfo"
+
 
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
 ]
+
+
 PASSWORD = None
 USER_NUM = 0
 USER_DATA = []
 CURRENT_USER = -1
 MODELS = set()
+
+
+TRACE_ID = "3042e28b3abf475d8d973c7e904935af"
+SENTRY_TRACE = f"{TRACE_ID}-80d9d2538b2682d0"
 
 
 def resolve_config():
@@ -62,71 +69,167 @@ def check_auth(token):
     return hashlib.sha256(token.encode()).hexdigest() == PASSWORD
 
 
+def is_token_expired(token):
+    if not token:
+        return True
+    
+    try:
+        # Malkodi tokenon sen validigo de subskribo
+        payload = jwt.decode(token, options={"verify_signature": False})
+        # Akiru eksvalidiĝan tempon, konsideru eksvalidiĝinta 5 minutojn antaŭe
+        return payload.get('exp', 0) - time.time() < 300
+    except:
+        return True
+
+
+def refresh_token(session, cookies):
+    """Uzu kuketon por refreŝigi session token, nur revenigu novan tokenon"""
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "content-type": "application/json",
+        "reai-ui": "1",
+        "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "x-abacus-org-host": "apps",
+        "user-agent": random.choice(USER_AGENTS),
+        "origin": "https://apps.abacus.ai",
+        "referer": "https://apps.abacus.ai/",
+        "cookie": cookies
+    }
+    
+    try:
+        response = session.post(
+            USER_INFO_URL,
+            headers=headers,
+            json={},
+            cookies=None
+        )
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            if response_data.get('success') and 'sessionToken' in response_data.get('result', {}):
+                return response_data['result']['sessionToken']
+            else:
+                print(f"刷新token失败: {response_data.get('error', '未知错误')}")
+                return None
+        else:
+            print(f"刷新token失败，状态码: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"刷新token异常: {e}")
+        return None
+
+
+def get_model_map(session, cookies, session_token):
+    """Akiru disponeblan modelan liston kaj ĝiajn mapajn rilatojn"""
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "content-type": "application/json",
+        "reai-ui": "1",
+        "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "x-abacus-org-host": "apps",
+        "user-agent": random.choice(USER_AGENTS),
+        "origin": "https://apps.abacus.ai",
+        "referer": "https://apps.abacus.ai/",
+        "cookie": cookies
+    }
+    
+    if session_token:
+        headers["session-token"] = session_token
+    
+    model_map = {}
+    models_set = set()
+    
+    try:
+        response = session.post(
+            MODEL_LIST_URL,
+            headers=headers,
+            json={},
+            cookies=None
+        )
+        
+        if response.status_code != 200:
+            print(f"获取模型列表失败，状态码: {response.status_code}")
+            raise Exception("API请求失败")
+        
+        data = response.json()
+        if not data.get('success'):
+            print(f"获取模型列表失败: {data.get('error', '未知错误')}")
+            raise Exception("API返回错误")
+        
+        applications = []
+        if isinstance(data.get('result'), dict):
+            applications = data.get('result', {}).get('externalApplications', [])
+        elif isinstance(data.get('result'), list):
+            applications = data.get('result', [])
+        
+        for app in applications:
+            app_name = app.get('name', '')
+            app_id = app.get('externalApplicationId', '')
+            prediction_overrides = app.get('predictionOverrides', {})
+            llm_name = prediction_overrides.get('llmName', '') if prediction_overrides else ''
+            
+            if not (app_name and app_id and llm_name):
+                continue
+                
+            model_name = app_name
+            model_map[model_name] = (app_id, llm_name)
+            models_set.add(model_name)
+        
+        if not model_map:
+            raise Exception("未找到任何可用模型")
+        
+        return model_map, models_set
+    
+    except Exception as e:
+        print(f"获取模型列表异常: {e}")
+        raise
+
+
 def init_session():
     get_password()
     global USER_NUM, MODELS, USER_DATA
     config_list = resolve_config()
     user_num = len(config_list)
+    all_models = set()
+    
     for i in range(user_num):
         user = config_list[i]
         cookies = user.get("cookies")
         conversation_id = user.get("conversation_id")
         session = requests.Session()
-        headers = {
-            "authority": "abacus.ai",
-            "method": "POST",
-            "path": "/api/v0/listExternalApplications",
-            "scheme": "https",
-            "accept": "application/json, text/plain, */*",
-            "accept-encoding": "gzip, deflate, br, zstd",
-            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "cache-control": "no-cache",
-            "cookie": cookies,
-            "origin": "https://apps.abacus.ai",
-            "pragma": "no-cache",
-            "priority": "u=1, i",
-            "reai-ui": "1",
-            "referer": "https://apps.abacus.ai/",
-            "sec-ch-ua": '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-site",
-            "user-agent": random.choice(USER_AGENTS),
-            "x-abacus-org-host": "apps",
-        }
-        payload = {"includeSearchLlm": False}
-        try:
-            response = session.post(MODEL_LIST_URL, headers=headers, json=payload)
-            response.raise_for_status()
-            cookies = update_cookie(session, cookies)
-            print(f"Updated cookies {i+1}: {cookies}")
-            response_data = response.json()
-            if response_data.get("success") is True:
-                model_map = {}
-                for data in response_data["result"]:
-                    model_map[data["name"]] = (
-                        data["externalApplicationId"],
-                        data["predictionOverrides"]["llmName"],
-                    )
-                print(f"Model map updated for cookie {i+1}")
-                USER_DATA.append((session, cookies, conversation_id, model_map))
-            else:
-                print(
-                    f"Failed to update model map for cookie {i+1}: {response_data.get('error')}"
-                )
-                continue
-        except requests.exceptions.RequestException as e:
-            print(f"Failed to update model map for cookie {i+1}: {e}")
+        
+        session_token = refresh_token(session, cookies)
+        if not session_token:
+            print(f"无法获取cookie {i+1}的token")
             continue
+        
+        try:
+            model_map, models_set = get_model_map(session, cookies, session_token)
+            all_models.update(models_set)
+            USER_DATA.append((session, cookies, session_token, conversation_id, model_map))
+        except Exception as e:
+            print(f"配置用户 {i+1} 失败: {e}")
+            continue
+    
     USER_NUM = len(USER_DATA)
     if USER_NUM == 0:
         print("No user available, exiting...")
         exit(1)
-    model_map = USER_DATA[0][3]
-    MODELS = set(model_map.keys())
-    print(f"running for {USER_NUM} users")
+    
+    MODELS = all_models
+    print(f"启动完成，共配置 {USER_NUM} 个用户")
 
 
 def update_cookie(session, cookies):
@@ -197,290 +300,271 @@ def chat_completions():
 def get_user_data():
     global CURRENT_USER
     CURRENT_USER = (CURRENT_USER + 1) % USER_NUM
-    print(f"Using cookie {CURRENT_USER+1}")
-    return USER_DATA[CURRENT_USER]
+    print(f"使用配置 {CURRENT_USER+1}")
+    
+    # Akiru uzantajn datumojn
+    session, cookies, session_token, conversation_id, model_map = USER_DATA[CURRENT_USER]
+    
+    # Kontrolu ĉu la tokeno eksvalidiĝis, se jes, refreŝigu ĝin
+    if is_token_expired(session_token):
+        print(f"Cookie {CURRENT_USER+1}的token已过期或即将过期，正在刷新...")
+        new_token = refresh_token(session, cookies)
+        if new_token:
+            # Ĝisdatigu la globale konservitan tokenon
+            USER_DATA[CURRENT_USER] = (session, cookies, new_token, conversation_id, model_map)
+            session_token = new_token
+            print(f"成功更新token: {session_token[:15]}...{session_token[-15:]}")
+        else:
+            print(f"警告：无法刷新Cookie {CURRENT_USER+1}的token，继续使用当前token")
+    
+    return (session, cookies, session_token, conversation_id, model_map)
+
+
+def generate_trace_id():
+    """Generu novan trace_id kaj sentry_trace"""
+    trace_id = str(uuid.uuid4()).replace('-', '')
+    sentry_trace = f"{trace_id}-{str(uuid.uuid4())[:16]}"
+    return trace_id, sentry_trace
 
 
 def send_message(message, model, think=False):
-    (session, cookies, conversation_id, model_map) = get_user_data()
+    """Flua traktado kaj plusendo de mesaĝoj"""
+    (session, cookies, session_token, conversation_id, model_map) = get_user_data()
+    trace_id, sentry_trace = generate_trace_id()
+    
     headers = {
         "accept": "text/event-stream",
-        "accept-encoding": "gzip, deflate, br, zstd",
-        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "cache-control": "no-cache",
-        "connection": "keep-alive",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "baggage": f"sentry-environment=production,sentry-release=975eec6685013679c139fc88db2c48e123d5c604,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
         "content-type": "text/plain;charset=UTF-8",
         "cookie": cookies,
-        "host": "pa002.abacus.ai",
-        "origin": "https://apps.abacus.ai",
-        "pragma": "no-cache",
-        "referer": "https://apps.abacus.ai/",
-        "sec-ch-ua": '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
+        "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
         "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
+        "sec-ch-ua-platform": "\"Windows\"",
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-site",
-        "user-agent": random.choice(USER_AGENTS),
-        "x-abacus-org-host": "apps",
+        "sec-fetch-site": "same-origin",
+        "sentry-trace": sentry_trace,
+        "user-agent": random.choice(USER_AGENTS)
     }
+    
+    if session_token:
+        headers["session-token"] = session_token
+    
     payload = {
         "requestId": str(uuid.uuid4()),
         "deploymentConversationId": conversation_id,
         "message": message,
-        "isDesktop": True,
-        "chatConfig": {"timezone": "Asia/Shanghai", "language": "zh-CN"},
+        "isDesktop": False,
+        "chatConfig": {
+            "timezone": "Asia/Shanghai",
+            "language": "zh-CN"
+        },
         "llmName": model_map[model][1],
         "externalApplicationId": model_map[model][0],
         "regenerate": True,
-        "editPrompt": True,
+        "editPrompt": True
     }
+    
     if think:
-        print("Using thinking...")
         payload["useThinking"] = think
+    
     try:
-        response = session.post(TARGET_URL, headers=headers, json=payload, stream=True)
+        response = session.post(
+            CHAT_URL,
+            headers=headers,
+            data=json.dumps(payload),
+            stream=True
+        )
+        
         response.raise_for_status()
-
+        
+        def extract_segment(line_data):
+            try:
+                data = json.loads(line_data)
+                if "segment" in data:
+                    if isinstance(data["segment"], str):
+                        return data["segment"]
+                    elif isinstance(data["segment"], dict) and "segment" in data["segment"]:
+                        return data["segment"]["segment"]
+                return ""
+            except:
+                return ""
+        
         def generate():
-            try:
-                print("---------- Response ----------")
-                for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode("utf-8")
-                        try:
-                            data = json.loads(decoded_line)
-                            segment = data.get("segment", "")
-                            print(segment, end="")
-                            openai_chunk = {
-                                "id": "chatcmpl-" + str(uuid.uuid4()),
-                                "object": "chat.completion.chunk",
-                                "created": int(time.time()),
-                                "model": model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {"content": segment},
-                                        "finish_reason": None,
-                                    }
-                                ],
-                            }
-                            yield f"data: {json.dumps(openai_chunk)}\n\n"
-
-                        except json.JSONDecodeError:
-                            print(f"Failed to decode line: {decoded_line}")
-                print("\n---------- Response End ----------")
-                yield f"data: [DONE]\n\n"
-            except Exception as e:
-                print(f"Failed to send message: {e}")
-                yield f'data: {{"error": "{e}"}}\n\n'
-
-        def generate_think():
-            time.sleep(2)
-            try:
-                print("---------- Response ----------")
-                id = ""
-                think = 2
-                for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode("utf-8")
-                        try:
+            id = ""
+            think_state = 2
+            
+            yield "data: " + json.dumps({"object": "chat.completion.chunk", "choices": [{"delta": {"role": "assistant"}}]}) + "\n\n"
+            
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode("utf-8")
+                    try:
+                        if think:
                             data = json.loads(decoded_line)
                             if data.get("type") != "text":
                                 continue
-                            elif think == 2:
+                            elif think_state == 2:
                                 id = data.get("messageId")
                                 segment = "<think>\n" + data.get("segment", "")
-                                print(segment, end="")
-                                openai_chunk = {
-                                    "id": "chatcmpl-" + str(uuid.uuid4()),
-                                    "object": "chat.completion.chunk",
-                                    "created": int(time.time()),
-                                    "model": model,
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "delta": {"content": segment},
-                                            "finish_reason": None,
-                                        }
-                                    ],
-                                }
-                                yield f"data: {json.dumps(openai_chunk)}\n\n"
-                                think = 1
-                            elif think == 1:
+                                yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
+                                think_state = 1
+                            elif think_state == 1:
                                 if data.get("messageId") != id:
                                     segment = data.get("segment", "")
-                                    print(segment, end="")
-                                    openai_chunk = {
-                                        "id": "chatcmpl-" + str(uuid.uuid4()),
-                                        "object": "chat.completion.chunk",
-                                        "created": int(time.time()),
-                                        "model": model,
-                                        "choices": [
-                                            {
-                                                "index": 0,
-                                                "delta": {"content": segment},
-                                                "finish_reason": None,
-                                            }
-                                        ],
-                                    }
-                                    yield f"data: {json.dumps(openai_chunk)}\n\n"
+                                    yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
                                 else:
                                     segment = "\n</think>\n" + data.get("segment", "")
-                                    print(segment, end="")
-                                    openai_chunk = {
-                                        "id": "chatcmpl-" + str(uuid.uuid4()),
-                                        "object": "chat.completion.chunk",
-                                        "created": int(time.time()),
-                                        "model": model,
-                                        "choices": [
-                                            {
-                                                "index": 0,
-                                                "delta": {"content": segment},
-                                                "finish_reason": None,
-                                            }
-                                        ],
-                                    }
-                                    yield f"data: {json.dumps(openai_chunk)}\n\n"
-                                    think = 0
+                                    yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
+                                    think_state = 0
                             else:
                                 segment = data.get("segment", "")
-                                print(segment, end="")
-                                openai_chunk = {
-                                    "id": "chatcmpl-" + str(uuid.uuid4()),
-                                    "object": "chat.completion.chunk",
-                                    "created": int(time.time()),
-                                    "model": model,
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "delta": {"content": segment},
-                                            "finish_reason": None,
-                                        }
-                                    ],
-                                }
-                                yield f"data: {json.dumps(openai_chunk)}\n\n"
-                        except json.JSONDecodeError:
-                            print(f"Failed to decode line: {decoded_line}")
-                print("\n---------- Response End ----------")
-                yield f"data: [DONE]\n\n"
-            except Exception as e:
-                print(f"Failed to send message: {e}")
-                yield f'data: {{"error": "{e}"}}\n\n'
-
-        return Response(
-            generate_think() if think else generate(), content_type="text/event-stream"
-        )
+                                yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
+                        else:
+                            segment = extract_segment(decoded_line)
+                            if segment:
+                                yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
+                    except Exception as e:
+                        print(f"处理响应出错: {e}")
+            
+            yield "data: " + json.dumps({"object": "chat.completion.chunk", "choices": [{"delta": {}, "finish_reason": "stop"}]}) + "\n\n"
+            yield "data: [DONE]\n\n"
+        
+        return Response(generate(), mimetype="text/event-stream")
     except requests.exceptions.RequestException as e:
-        print(f"Failed to send message: {e}")
-        return jsonify({"error": "Failed to send message"}), 500
+        error_details = str(e)
+        if hasattr(e, 'response') and e.response is not None:
+            if hasattr(e.response, 'text'):
+                error_details += f" - Response: {e.response.text[:200]}"
+        print(f"发送消息失败: {error_details}")
+        return jsonify({"error": f"Failed to send message: {error_details}"}), 500
 
 
 def send_message_non_stream(message, model, think=False):
-    (session, cookies, conversation_id, model_map) = get_user_data()
+    """Ne-flua traktado de mesaĝoj"""
+    (session, cookies, session_token, conversation_id, model_map) = get_user_data()
+    trace_id, sentry_trace = generate_trace_id()
+    
     headers = {
-        "accept": "application/json, text/plain, */*",
-        "accept-encoding": "gzip, deflate, br, zstd",
-        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "cache-control": "no-cache",
-        "content-type": "application/json;charset=UTF-8",
+        "accept": "text/event-stream",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "baggage": f"sentry-environment=production,sentry-release=975eec6685013679c139fc88db2c48e123d5c604,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
+        "content-type": "text/plain;charset=UTF-8",
         "cookie": cookies,
-        "origin": "https://apps.abacus.ai",
-        "pragma": "no-cache",
-        "referer": "https://apps.abacus.ai/",
-        "sec-ch-ua": '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
+        "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
         "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
+        "sec-ch-ua-platform": "\"Windows\"",
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-site",
-        "user-agent": random.choice(USER_AGENTS),
-        "x-abacus-org-host": "apps",
+        "sec-fetch-site": "same-origin",
+        "sentry-trace": sentry_trace,
+        "user-agent": random.choice(USER_AGENTS)
     }
+    
+    if session_token:
+        headers["session-token"] = session_token
+    
     payload = {
         "requestId": str(uuid.uuid4()),
         "deploymentConversationId": conversation_id,
         "message": message,
-        "isDesktop": True,
-        "chatConfig": {"timezone": "Asia/Shanghai", "language": "zh-CN"},
+        "isDesktop": False,
+        "chatConfig": {
+            "timezone": "Asia/Shanghai",
+            "language": "zh-CN"
+        },
         "llmName": model_map[model][1],
         "externalApplicationId": model_map[model][0],
         "regenerate": True,
-        "editPrompt": True,
+        "editPrompt": True
     }
+    
     if think:
-        print("Using thinking...")
         payload["useThinking"] = think
+    
     try:
-        response = session.post(TARGET_URL, headers=headers, json=payload, stream=True)
+        response = session.post(
+            CHAT_URL,
+            headers=headers,
+            data=json.dumps(payload),
+            stream=True
+        )
+        
         response.raise_for_status()
         buffer = io.StringIO()
-        try:
-            print("---------- Response ----------")
-            if think:
-                id = ""
-                think = 2
-                for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode("utf-8")
-                        try:
-                            data = json.loads(decoded_line)
-                            if data.get("type") != "text":
-                                continue
-                            elif think == 2:
-                                id = data.get("messageId")
-                                segment = "<think>\n" + data.get("segment", "")
-                                print(segment, end="")
-                                buffer.write(segment)
-                                think = 1
-                            elif think == 1:
-                                if data.get("messageId") != id:
-                                    segment = data.get("segment", "")
-                                    print(segment, end="")
-                                    buffer.write(segment)
-                                else:
-                                    segment = "\n<\think>\n" + data.get("segment", "")
-                                    print(segment, end="")
-                                    buffer.write(segment)
-                                    think = 0
-                            else:
-                                segment = data.get("segment", "")
-                                print(segment, end="")
-                                buffer.write(segment)
-                        except json.JSONDecodeError:
-                            print(f"Failed to decode line: {decoded_line}")
-            else:
-                for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode("utf-8")
-                        try:
-                            data = json.loads(decoded_line)
-                            segment = data.get("segment", "")
-                            print(segment, end="")
+        
+        def extract_segment(line_data):
+            try:
+                data = json.loads(line_data)
+                if "segment" in data:
+                    if isinstance(data["segment"], str):
+                        return data["segment"]
+                    elif isinstance(data["segment"], dict) and "segment" in data["segment"]:
+                        return data["segment"]["segment"]
+                return ""
+            except:
+                return ""
+        
+        if think:
+            id = ""
+            think_state = 2
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode("utf-8")
+                    try:
+                        data = json.loads(decoded_line)
+                        if data.get("type") != "text":
+                            continue
+                        elif think_state == 2:
+                            id = data.get("messageId")
+                            segment = "<think>\n" + data.get("segment", "")
                             buffer.write(segment)
-                        except json.JSONDecodeError:
-                            print(f"Failed to decode line: {decoded_line}")
-            print("\n---------- Response End ----------")
-            openai_response = {
-                "id": "chatcmpl-" + str(uuid.uuid4()),
-                "object": "chat.completion",
-                "created": int(time.time()),
-                "model": model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": buffer.getvalue()},
-                        "finish_reason": "completed",
-                    }
-                ],
-            }
-            return jsonify(openai_response)
-        except Exception as e:
-            print(f"Failed to send message: {e}")
-            return jsonify({"error": "Failed to send message"}), 500
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to send message: {e}")
-        return jsonify({"error": "Failed to send message"}), 500
+                            think_state = 1
+                        elif think_state == 1:
+                            if data.get("messageId") != id:
+                                segment = data.get("segment", "")
+                                buffer.write(segment)
+                            else:
+                                segment = "\n</think>\n" + data.get("segment", "")
+                                buffer.write(segment)
+                                think_state = 0
+                        else:
+                            segment = data.get("segment", "")
+                            buffer.write(segment)
+                    except json.JSONDecodeError as e:
+                        print(f"解析响应出错: {e}")
+        else:
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode("utf-8")
+                    try:
+                        segment = extract_segment(decoded_line)
+                        if segment:
+                            buffer.write(segment)
+                    except Exception as e:
+                        print(f"处理响应出错: {e}")
+        
+        openai_response = {
+            "id": "chatcmpl-" + str(uuid.uuid4()),
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": buffer.getvalue()},
+                    "finish_reason": "completed",
+                }
+            ],
+        }
+        return jsonify(openai_response)
+    except Exception as e:
+        error_details = str(e)
+        if isinstance(e, requests.exceptions.RequestException) and e.response is not None:
+            error_details += f" - Response: {e.response.text[:200]}"
+        print(f"发送消息失败: {error_details}")
+        return jsonify({"error": f"Failed to send message: {error_details}"}), 500
 
 
 def format_message(messages):
