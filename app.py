@@ -12,6 +12,7 @@ import jwt
 import os
 import threading
 from datetime import datetime
+import tiktoken  # 导入tiktoken来计算token数量
 
 app = Flask(__name__)
 
@@ -40,6 +41,15 @@ SENTRY_TRACE = f"{TRACE_ID}-80d9d2538b2682d0"
 
 # 添加一个计数器记录健康检查次数
 health_check_counter = 0
+
+
+# 添加统计变量
+model_usage_stats = {}  # 模型使用次数统计
+total_tokens = {
+    "prompt": 0,       # 输入token统计
+    "completion": 0,   # 输出token统计
+    "total": 0         # 总token统计
+}
 
 
 # HTML模板
@@ -80,6 +90,11 @@ INDEX_HTML = """
             margin-bottom: 1rem;
             text-align: center;
             font-size: 2.5rem;
+        }
+        h2 {
+            color: #3a4a5c;
+            margin: 1.5rem 0 1rem;
+            font-size: 1.5rem;
         }
         .status-card {
             background: #f8f9fa;
@@ -142,6 +157,32 @@ INDEX_HTML = """
             padding: 0.25rem 0.5rem;
             border-radius: 4px;
         }
+        .usage-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+        .usage-table th, .usage-table td {
+            padding: 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .usage-table th {
+            background-color: #e9ecef;
+            font-weight: 600;
+            color: #495057;
+        }
+        .usage-table tbody tr:hover {
+            background-color: #f1f3f5;
+        }
+        .token-count {
+            font-family: monospace;
+            color: #0366d6;
+        }
+        .call-count {
+            font-family: monospace;
+            color: #28a745;
+        }
         @media (max-width: 768px) {
             .container {
                 padding: 1rem;
@@ -183,8 +224,47 @@ INDEX_HTML = """
             </div>
         </div>
 
+        <h2>🔍 模型使用统计</h2>
+        <div class="status-card">
+            <div class="status-item">
+                <span class="status-label">总Token使用量</span>
+                <span class="status-value token-count">{{ total_tokens.total|int }}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">输入Token</span>
+                <span class="status-value token-count">{{ total_tokens.prompt|int }}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">输出Token</span>
+                <span class="status-value token-count">{{ total_tokens.completion|int }}</span>
+            </div>
+            
+            <table class="usage-table">
+                <thead>
+                    <tr>
+                        <th>模型</th>
+                        <th>调用次数</th>
+                        <th>输入Token</th>
+                        <th>输出Token</th>
+                        <th>总Token</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for model, stats in model_stats.items() %}
+                    <tr>
+                        <td>{{ model }}</td>
+                        <td class="call-count">{{ stats.count }}</td>
+                        <td class="token-count">{{ stats.prompt_tokens|int }}</td>
+                        <td class="token-count">{{ stats.completion_tokens|int }}</td>
+                        <td class="token-count">{{ stats.total_tokens|int }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
         <div class="endpoints">
-            <h2>API端点</h2>
+            <h2>📡 API端点</h2>
             <div class="endpoint-item">
                 <p>获取模型列表：</p>
                 <code class="endpoint-url">GET /v1/models</code>
@@ -541,6 +621,10 @@ def send_message(message, model, think=False):
     (session, cookies, session_token, conversation_id, model_map) = get_user_data()
     trace_id, sentry_trace = generate_trace_id()
     
+    # 计算输入token
+    prompt_tokens = num_tokens_from_string(message)
+    completion_buffer = io.StringIO()  # 收集所有输出用于计算token
+    
     headers = {
         "accept": "text/event-stream",
         "accept-language": "zh-CN,zh;q=0.9",
@@ -617,28 +701,37 @@ def send_message(message, model, think=False):
                             elif think_state == 2:
                                 id = data.get("messageId")
                                 segment = "<think>\n" + data.get("segment", "")
+                                completion_buffer.write(segment)  # 收集输出
                                 yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
                                 think_state = 1
                             elif think_state == 1:
                                 if data.get("messageId") != id:
                                     segment = data.get("segment", "")
+                                    completion_buffer.write(segment)  # 收集输出
                                     yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
                                 else:
                                     segment = "\n</think>\n" + data.get("segment", "")
+                                    completion_buffer.write(segment)  # 收集输出
                                     yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
                                     think_state = 0
                             else:
                                 segment = data.get("segment", "")
+                                completion_buffer.write(segment)  # 收集输出
                                 yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
                         else:
                             segment = extract_segment(decoded_line)
                             if segment:
+                                completion_buffer.write(segment)  # 收集输出
                                 yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
                     except Exception as e:
                         print(f"处理响应出错: {e}")
             
             yield "data: " + json.dumps({"object": "chat.completion.chunk", "choices": [{"delta": {}, "finish_reason": "stop"}]}) + "\n\n"
             yield "data: [DONE]\n\n"
+            
+            # 在流式传输完成后计算token并更新统计
+            completion_tokens = num_tokens_from_string(completion_buffer.getvalue())
+            update_model_stats(model, prompt_tokens, completion_tokens)
         
         return Response(generate(), mimetype="text/event-stream")
     except requests.exceptions.RequestException as e:
@@ -654,6 +747,9 @@ def send_message_non_stream(message, model, think=False):
     """Ne-flua traktado de mesaĝoj"""
     (session, cookies, session_token, conversation_id, model_map) = get_user_data()
     trace_id, sentry_trace = generate_trace_id()
+    
+    # 计算输入token
+    prompt_tokens = num_tokens_from_string(message)
     
     headers = {
         "accept": "text/event-stream",
@@ -718,6 +814,9 @@ def send_message_non_stream(message, model, think=False):
         if think:
             id = ""
             think_state = 2
+            think_buffer = io.StringIO()
+            content_buffer = io.StringIO()
+            
             for line in response.iter_lines():
                 if line:
                     decoded_line = line.decode("utf-8")
@@ -727,51 +826,87 @@ def send_message_non_stream(message, model, think=False):
                             continue
                         elif think_state == 2:
                             id = data.get("messageId")
-                            segment = "<think>\n" + data.get("segment", "")
-                            buffer.write(segment)
+                            segment = data.get("segment", "")
+                            think_buffer.write(segment)
                             think_state = 1
                         elif think_state == 1:
                             if data.get("messageId") != id:
                                 segment = data.get("segment", "")
-                                buffer.write(segment)
+                                content_buffer.write(segment)
                             else:
-                                segment = "\n</think>\n" + data.get("segment", "")
-                                buffer.write(segment)
+                                segment = data.get("segment", "")
+                                think_buffer.write(segment)
                                 think_state = 0
                         else:
                             segment = data.get("segment", "")
-                            buffer.write(segment)
-                    except json.JSONDecodeError as e:
-                        print(f"解析响应出错: {e}")
+                            content_buffer.write(segment)
+                    except Exception as e:
+                        print(f"处理响应出错: {e}")
+            
+            think_content = think_buffer.getvalue()
+            response_content = content_buffer.getvalue()
+            
+            # 计算输出token并更新统计信息
+            completion_tokens = num_tokens_from_string(think_content + response_content)
+            update_model_stats(model, prompt_tokens, completion_tokens)
+            
+            return jsonify({
+                "id": f"chatcmpl-{str(uuid.uuid4())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": f"<think>\n{think_content}\n</think>\n{response_content}"
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens
+                }
+            })
         else:
             for line in response.iter_lines():
                 if line:
                     decoded_line = line.decode("utf-8")
-                    try:
-                        segment = extract_segment(decoded_line)
-                        if segment:
-                            buffer.write(segment)
-                    except Exception as e:
-                        print(f"处理响应出错: {e}")
-        
-        openai_response = {
-            "id": "chatcmpl-" + str(uuid.uuid4()),
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": model,
-            "choices": [
-                {
+                    segment = extract_segment(decoded_line)
+                    if segment:
+                        buffer.write(segment)
+            
+            response_content = buffer.getvalue()
+            
+            # 计算输出token并更新统计信息
+            completion_tokens = num_tokens_from_string(response_content)
+            update_model_stats(model, prompt_tokens, completion_tokens)
+            
+            return jsonify({
+                "id": f"chatcmpl-{str(uuid.uuid4())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{
                     "index": 0,
-                    "message": {"role": "assistant", "content": buffer.getvalue()},
-                    "finish_reason": "completed",
+                    "message": {
+                        "role": "assistant",
+                        "content": response_content
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens
                 }
-            ],
-        }
-        return jsonify(openai_response)
-    except Exception as e:
+            })
+    except requests.exceptions.RequestException as e:
         error_details = str(e)
-        if isinstance(e, requests.exceptions.RequestException) and e.response is not None:
-            error_details += f" - Response: {e.response.text[:200]}"
+        if hasattr(e, 'response') and e.response is not None:
+            if hasattr(e.response, 'text'):
+                error_details += f" - Response: {e.response.text[:200]}"
         print(f"发送消息失败: {error_details}")
         return jsonify({"error": f"Failed to send message: {error_details}"}), 500
 
@@ -868,8 +1003,42 @@ def index():
         health_checks=health_check_counter,
         user_count=USER_NUM,
         models=sorted(list(MODELS)),
-        year=datetime.now().year
+        year=datetime.now().year,
+        model_stats=model_usage_stats,
+        total_tokens=total_tokens
     )
+
+
+# 获取OpenAI的tokenizer来计算token数
+def num_tokens_from_string(string, model="gpt-3.5-turbo"):
+    """计算文本的token数量"""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+        num_tokens = len(encoding.encode(string))
+        return num_tokens
+    except:
+        # 如果tiktoken不支持模型或者出错，使用简单的估算
+        return len(string) // 4  # 粗略估计每个token约4个字符
+
+# 更新模型使用统计
+def update_model_stats(model, prompt_tokens, completion_tokens):
+    global model_usage_stats, total_tokens
+    if model not in model_usage_stats:
+        model_usage_stats[model] = {
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        }
+    
+    model_usage_stats[model]["count"] += 1
+    model_usage_stats[model]["prompt_tokens"] += prompt_tokens
+    model_usage_stats[model]["completion_tokens"] += completion_tokens
+    model_usage_stats[model]["total_tokens"] += (prompt_tokens + completion_tokens)
+    
+    total_tokens["prompt"] += prompt_tokens
+    total_tokens["completion"] += completion_tokens
+    total_tokens["total"] += (prompt_tokens + completion_tokens)
 
 
 if __name__ == "__main__":
