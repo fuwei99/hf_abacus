@@ -925,8 +925,6 @@ def format_message(messages):
         else:
             buffer.write(f"{role}: {content}\n\n")
     formatted_message = buffer.getvalue()
-    with open("message_log.txt", "w", encoding="utf-8") as f:
-        f.write(formatted_message)
     return formatted_message
 
 
@@ -1015,10 +1013,13 @@ def num_tokens_from_string(string, model="gpt-3.5-turbo"):
     try:
         encoding = tiktoken.encoding_for_model(model)
         num_tokens = len(encoding.encode(string))
+        print(f"使用tiktoken计算token数: {num_tokens}")
         return num_tokens
-    except:
+    except Exception as e:
         # 如果tiktoken不支持模型或者出错，使用简单的估算
-        return len(string) // 4  # 粗略估计每个token约4个字符
+        estimated_tokens = len(string) // 4  # 粗略估计每个token约4个字符
+        print(f"使用估算方法计算token数: {estimated_tokens} (原因: {str(e)})")
+        return estimated_tokens
 
 # 更新模型使用统计
 def update_model_stats(model, prompt_tokens, completion_tokens):
