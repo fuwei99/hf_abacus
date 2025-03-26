@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, render_template_string
 import requests
 import time
 import json
@@ -9,6 +9,9 @@ import re
 from functools import wraps
 import hashlib
 import jwt  
+import os
+import threading
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -35,15 +38,221 @@ TRACE_ID = "3042e28b3abf475d8d973c7e904935af"
 SENTRY_TRACE = f"{TRACE_ID}-80d9d2538b2682d0"
 
 
+# 添加一个计数器记录健康检查次数
+health_check_counter = 0
+
+
+# HTML模板
+INDEX_HTML = """
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abacus Chat Proxy</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 1rem;
+            text-align: center;
+            font-size: 2.5rem;
+        }
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        .status-label {
+            color: #6c757d;
+            font-weight: 500;
+        }
+        .status-value {
+            color: #28a745;
+            font-weight: 600;
+        }
+        .status-value.warning {
+            color: #ffc107;
+        }
+        .footer {
+            margin-top: 2rem;
+            text-align: center;
+            color: #6c757d;
+        }
+        .models-list {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        .model-tag {
+            background: #e9ecef;
+            padding: 0.25rem 0.75rem;
+            border-radius: 16px;
+            font-size: 0.875rem;
+            color: #495057;
+        }
+        .endpoints {
+            margin-top: 2rem;
+        }
+        .endpoint-item {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+        .endpoint-url {
+            font-family: monospace;
+            background: #e9ecef;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Abacus Chat Proxy</h1>
+        
+        <div class="status-card">
+            <div class="status-item">
+                <span class="status-label">服务状态</span>
+                <span class="status-value">运行中</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">运行时间</span>
+                <span class="status-value">{{ uptime }}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">健康检查次数</span>
+                <span class="status-value">{{ health_checks }}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">已配置用户数</span>
+                <span class="status-value">{{ user_count }}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">可用模型</span>
+                <div class="models-list">
+                    {% for model in models %}
+                    <span class="model-tag">{{ model }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="endpoints">
+            <h2>API端点</h2>
+            <div class="endpoint-item">
+                <p>获取模型列表：</p>
+                <code class="endpoint-url">GET /v1/models</code>
+            </div>
+            <div class="endpoint-item">
+                <p>聊天补全：</p>
+                <code class="endpoint-url">POST /v1/chat/completions</code>
+            </div>
+            <div class="endpoint-item">
+                <p>健康检查：</p>
+                <code class="endpoint-url">GET /health</code>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>© {{ year }} Abacus Chat Proxy. 保持简单，保持可靠。</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+# 记录启动时间
+START_TIME = datetime.now()
+
+
 def resolve_config():
-    with open("config.json", "r") as f:
-        config = json.load(f)
-    config_list = config.get("config")
-    return config_list
+    # 从环境变量读取多组配置
+    config_list = []
+    i = 1
+    while True:
+        covid = os.environ.get(f"covid_{i}")
+        cookie = os.environ.get(f"cookie_{i}")
+        if not (covid and cookie):
+            break
+        config_list.append({
+            "conversation_id": covid,
+            "cookies": cookie
+        })
+        i += 1
+    
+    # 如果环境变量存在配置，使用环境变量的配置
+    if config_list:
+        return config_list
+    
+    # 如果环境变量不存在，从文件读取
+    try:
+        with open("config.json", "r") as f:
+            config = json.load(f)
+        config_list = config.get("config")
+        return config_list
+    except FileNotFoundError:
+        print("未找到config.json文件")
+        return []
+    except json.JSONDecodeError:
+        print("config.json格式错误")
+        return []
 
 
 def get_password():
     global PASSWORD
+    # 从环境变量读取密码
+    env_password = os.environ.get("password")
+    if env_password:
+        PASSWORD = hashlib.sha256(env_password.encode()).hexdigest()
+        return
+
+    # 如果环境变量不存在，从文件读取
     try:
         with open("password.txt", "r") as f:
             PASSWORD = f.read().strip()
@@ -618,5 +827,53 @@ def extract_role(messages):
     return (role_map, prefix, messages)
 
 
+@app.route("/health", methods=["GET"])
+def health_check():
+    global health_check_counter
+    health_check_counter += 1
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "checks": health_check_counter
+    })
+
+
+def keep_alive():
+    """每20分钟进行一次自我健康检查"""
+    while True:
+        try:
+            requests.get("http://127.0.0.1:7860/health")
+            time.sleep(1200)  # 20分钟
+        except:
+            pass  # 忽略错误，保持运行
+
+
+@app.route("/", methods=["GET"])
+def index():
+    uptime = datetime.now() - START_TIME
+    days = uptime.days
+    hours, remainder = divmod(uptime.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    if days > 0:
+        uptime_str = f"{days}天 {hours}小时 {minutes}分钟"
+    elif hours > 0:
+        uptime_str = f"{hours}小时 {minutes}分钟"
+    else:
+        uptime_str = f"{minutes}分钟 {seconds}秒"
+
+    return render_template_string(
+        INDEX_HTML,
+        uptime=uptime_str,
+        health_checks=health_check_counter,
+        user_count=USER_NUM,
+        models=sorted(list(MODELS)),
+        year=datetime.now().year
+    )
+
+
 if __name__ == "__main__":
-    app.run(port=9876, host="0.0.0.0")
+    # 启动保活线程
+    threading.Thread(target=keep_alive, daemon=True).start()
+    port = int(os.environ.get("PORT", 9876))
+    app.run(port=port, host="0.0.0.0")
