@@ -39,7 +39,9 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 2. 登录你的Hugging Face账号（如果还没有，需要注册一个）
 3. 在弹出的页面中设置你的Space名称，注意创建space的时候把private改为public，因为不改为为public导致的错误别来找我
 4. 创建完Space后，在Space的Settings -> Repository Secrets中添加以下配置：
-   - `cookie_1`: 你的cookies字符串
+   - `cookie_1`: 第一个cookie
+   - `cookie_2`: 第二个cookie（如果有）
+   - 以此类推...
    - `password`: （必填，最好超过8位数，不然被盗用api导致点数用光，损失自负）api调用密码，也是dashboard登录密码
 5. 等待自动部署完成即可
 6. 登录dashboard查看使用情况，space里面是没办法登录的，点击弹出的登录页面的小窗口提示“请点击 https://xyz-abacus-chat-proxy.hf.space 来登录并查看使用情况”的链接来登录，登录密码是你设置的password
