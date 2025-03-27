@@ -23,6 +23,10 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 
 [![Deploy to Hugging Face Spaces](https://huggingface.co/datasets/huggingface/badges/raw/main/deploy-to-spaces-lg.svg)](https://huggingface.co/spaces/malt666/abacus_chat_proxy?duplicate=true)
 
+## ⚠️ 警告
+
+**本地部署方式已失效！**为了适配hugging face，本项目的本地部署方式已不再可用。目前只能通过Hugging Face Spaces部署来使用本代理服务。请使用下方的Hugging Face一键部署方法。
+
 ## 🚀 快速开始
 
 ### Hugging Face一键部署
@@ -35,9 +39,11 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
    - `cookie_1`: 你的cookies字符串
    - `password`: （可选）访问密码
 5. 等待自动部署完成即可
-6. **获取API链接**：部署成功后，点击右上角的三个点按钮，在弹出的选项卡里面点击"Embed this Space"，然后在弹出的"Embed this Space"界面里的"Direct URL"就是你的访问链接，你可以用这个链接调用API
+6. **获取API链接**：部署成功后，点击右上角的三个点按钮，在弹出的选项卡里面点击"Embed this Space"，然后在弹出的"Embed this Space"界面里的"Direct URL"就是你的访问链接，你可以用这个链接调用API和查看使用情况
 
-### 本地运行
+### 本地运行（已失效）
+
+> ⚠️ 以下本地运行方法已失效，仅作参考。请使用Hugging Face部署方式。
 
 #### Windows用户
 
@@ -107,7 +113,5 @@ PyJWT==2.8.0
 
 ## 🔒 安全说明
 
-- 配置文件中的敏感信息请妥善保管
 - 建议在部署到Hugging Face时设置访问密码
-- 不要将包含敏感信息的配置文件提交到公开仓库
 - 在Hugging Face上配置时，请使用Secrets来存储敏感信息 
