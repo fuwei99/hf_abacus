@@ -33,7 +33,7 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 
 1. 点击上方的"Deploy to Hugging Face Spaces"按钮
 2. 登录你的Hugging Face账号（如果还没有，需要注册一个）
-3. 在弹出的页面中设置你的Space名称
+3. 在弹出的页面中设置你的Space名称，注意一定要设置为public，不然连不上（你的cookie和password放在了secret里面，别人看不到的,也调用不了）
 4. 创建完Space后，在Space的Settings -> Repository Secrets中添加以下配置：
    - `covid_1`: 你的会话ID
    - `cookie_1`: 你的cookies字符串
