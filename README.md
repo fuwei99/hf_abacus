@@ -25,7 +25,7 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 
 ## ⚠️ 警告
 
-**本地部署方式已失效！**为了适配hugging face，本项目的本地部署方式已不再可用。目前只能通过Hugging Face Spaces部署来使用本代理服务。请使用下方的Hugging Face一键部署方法。
+** 本地部署方式已失效！**为了适配hugging face，本项目的本地部署方式已不再可用。目前只能通过Hugging Face Spaces部署来使用本代理服务。请使用下方的Hugging Face一键部署方法。
 
 ## 🚀 快速开始
 
