@@ -37,7 +37,7 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 4. 创建完Space后，在Space的Settings -> Repository Secrets中添加以下配置：
    - `covid_1`: 你的会话ID
    - `cookie_1`: 你的cookies字符串
-   - `password`: （可选）访问密码
+   - `password`: （必填，不然别人可以盗用你的链接）访问密码
 5. 等待自动部署完成即可
 6. **获取API链接**：部署成功后，点击右上角的三个点按钮，在弹出的选项卡里面点击"Embed this Space"，然后在弹出的"Embed this Space"界面里的"Direct URL"就是你的访问链接，你可以用这个链接调用API和查看使用情况
 
