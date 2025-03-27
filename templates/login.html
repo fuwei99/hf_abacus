@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abacus Chat Proxy - 登录</title>
+    <style>
+        :root {
+            --primary-color: #6f42c1;
+            --secondary-color: #4a32a8;
+            --bg-color: #0a0a1a;
+            --text-color: #e6e6ff;
+            --card-bg: rgba(30, 30, 60, 0.7);
+            --input-bg: rgba(40, 40, 80, 0.6);
+            --success-color: #36d399;
+            --error-color: #f87272;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 20% 35%, rgba(111, 66, 193, 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 80% 10%, rgba(70, 111, 171, 0.1) 0%, transparent 40%);
+            color: var(--text-color);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        /* 科幻蜘蛛网动画 */
+        .web-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -2;
+            opacity: 0.6;
+        }
+        
+        .web {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* 动态背景网格 */
+        .grid-background {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: linear-gradient(rgba(50, 50, 100, 0.05) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(50, 50, 100, 0.05) 1px, transparent 1px);
+            background-size: 30px 30px;
+            z-index: -1;
+            animation: grid-move 20s linear infinite;
+        }
+        
+        @keyframes grid-move {
+            0% {
+                transform: translateY(0);
+            }
+            100% {
+                transform: translateY(30px);
+            }
+        }
+        
+        /* 浮动粒子效果 */
+        .particles {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            z-index: -1;
+        }
+        
+        .particle {
+            position: absolute;
+            display: block;
+            pointer-events: none;
+            width: 6px;
+            height: 6px;
+            background-color: rgba(111, 66, 193, 0.2);
+            border-radius: 50%;
+            animation: float 20s infinite ease-in-out;
+        }
+        
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0) translateX(0);
+                opacity: 0;
+            }
+            50% {
+                opacity: 0.5;
+            }
+            25%, 75% {
+                transform: translateY(-100px) translateX(50px);
+            }
+        }
+        
+        .login-card {
+            width: 420px;
+            padding: 2.5rem;
+            border-radius: 16px;
+            background: var(--card-bg);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            z-index: 10;
+            animation: card-fade-in 0.6s ease-out;
+        }
+        
+        @keyframes card-fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .login-header h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(45deg, #6f42c1, #5181f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 0.5px;
+        }
+        
+        .login-header p {
+            color: rgba(230, 230, 255, 0.7);
+            font-size: 0.95rem;
+        }
+        
+        .space-info {
+            text-align: center;
+            background: rgba(50, 50, 150, 0.2);
+            padding: 0.75rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+            border: 1px solid rgba(111, 66, 193, 0.3);
+        }
+        
+        .space-info a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        
+        .space-info a:hover {
+            text-decoration: underline;
+            color: var(--secondary-color);
+        }
+        
+        .login-form {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+            position: relative;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: rgba(230, 230, 255, 0.9);
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            font-size: 1rem;
+            line-height: 1.5;
+            color: var(--text-color);
+            background-color: var(--input-bg);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            outline: none;
+        }
+        
+        .form-control:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(111, 66, 193, 0.2);
+        }
+        
+        .btn {
+            display: inline-block;
+            font-weight: 500;
+            text-align: center;
+            vertical-align: middle;
+            cursor: pointer;
+            padding: 0.75rem 1rem;
+            font-size: 1rem;
+            line-height: 1.5;
+            border-radius: 8px;
+            transition: all 0.15s ease-in-out;
+            border: none;
+        }
+        
+        .btn-primary {
+            color: #fff;
+            background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
+            box-shadow: 0 4px 10px rgba(111, 66, 193, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(111, 66, 193, 0.4);
+        }
+        
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+        
+        /* 添加光效效果 */
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(
+                to bottom right,
+                rgba(255, 255, 255, 0) 0%,
+                rgba(255, 255, 255, 0.1) 50%,
+                rgba(255, 255, 255, 0) 100%
+            );
+            transform: rotate(45deg);
+            animation: btn-shine 3s infinite;
+        }
+        
+        @keyframes btn-shine {
+            0% {
+                left: -50%;
+            }
+            100% {
+                left: 150%;
+            }
+        }
+        
+        .error-message {
+            background-color: rgba(248, 114, 114, 0.2);
+            color: var(--error-color);
+            padding: 0.75rem;
+            border-radius: 6px;
+            margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+            border-left: 3px solid var(--error-color);
+            display: {{ 'block' if error else 'none' }};
+        }
+        
+        .logo {
+            margin-bottom: 1rem;
+            font-size: 3rem;
+            animation: glow 2s infinite alternate;
+        }
+        
+        @keyframes glow {
+            from {
+                text-shadow: 0 0 5px rgba(111, 66, 193, 0.5), 0 0 10px rgba(111, 66, 193, 0.5);
+            }
+            to {
+                text-shadow: 0 0 10px rgba(111, 66, 193, 0.8), 0 0 20px rgba(111, 66, 193, 0.8);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="grid-background"></div>
+    <div class="particles">
+        <!-- 粒子元素会由JS生成 -->
+    </div>
+    <div class="web-container">
+        <canvas class="web" id="webCanvas"></canvas>
+    </div>
+    
+    <div class="login-card">
+        <div class="login-header">
+            <div class="logo">🤖</div>
+            <h1>Abacus Chat Proxy</h1>
+            <p>请输入访问密码</p>
+        </div>
+        
+        {% if space_url %}
+        <div class="space-info">
+            请访问 <a href="{{ space_url }}" target="_blank">{{ space_url }}</a> 登录查看使用情况
+        </div>
+        {% endif %}
+        
+        <div class="error-message" id="error-message">
+            {{ error }}
+        </div>
+        
+        <form class="login-form" method="post" action="/login">
+            <div class="form-group">
+                <label for="password">密码</label>
+                <input type="password" class="form-control" id="password" name="password" placeholder="请输入访问密码" required>
+            </div>
+            
+            <button type="submit" class="btn btn-primary">登录</button>
+        </form>
+    </div>
+    
+    <script>
+        // 创建浮动粒子
+        function createParticles() {
+            const particlesContainer = document.querySelector('.particles');
+            const particleCount = 20;
+            
+            for (let i = 0; i < particleCount; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                
+                // 随机位置和大小
+                const size = Math.random() * 5 + 2;
+                const x = Math.random() * 100;
+                const y = Math.random() * 100;
+                
+                particle.style.width = `${size}px`;
+                particle.style.height = `${size}px`;
+                particle.style.left = `${x}%`;
+                particle.style.top = `${y}%`;
+                
+                // 随机动画延迟
+                particle.style.animationDelay = `${Math.random() * 10}s`;
+                particle.style.animationDuration = `${Math.random() * 10 + 10}s`;
+                
+                // 随机透明度
+                particle.style.opacity = Math.random() * 0.5;
+                
+                particlesContainer.appendChild(particle);
+            }
+        }
+        
+        // 科幻蜘蛛网效果
+        function initWebCanvas() {
+            const canvas = document.getElementById('webCanvas');
+            const ctx = canvas.getContext('2d');
+            let width = window.innerWidth;
+            let height = window.innerHeight;
+            
+            // 设置canvas尺寸
+            canvas.width = width;
+            canvas.height = height;
+            
+            // 节点类
+            class Node {
+                constructor(x, y) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = (Math.random() - 0.5) * 0.5;
+                    this.vy = (Math.random() - 0.5) * 0.5;
+                    this.radius = Math.random() * 2 + 1;
+                }
+                
+                update() {
+                    if (this.x < 0 || this.x > width) this.vx = -this.vx;
+                    if (this.y < 0 || this.y > height) this.vy = -this.vy;
+                    
+                    this.x += this.vx;
+                    this.y += this.vy;
+                }
+                
+                draw() {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(111, 66, 193, 0.4)';
+                    ctx.fill();
+                }
+            }
+            
+            // 创建节点
+            const nodeCount = Math.floor(width * height / 15000);
+            const nodes = [];
+            
+            for (let i = 0; i < nodeCount; i++) {
+                nodes.push(new Node(Math.random() * width, Math.random() * height));
+            }
+            
+            // 绘制线条
+            function drawWeb() {
+                ctx.clearRect(0, 0, width, height);
+                
+                // 更新节点
+                nodes.forEach(node => {
+                    node.update();
+                    node.draw();
+                });
+                
+                // 绘制连线
+                for (let i = 0; i < nodes.length; i++) {
+                    for (let j = i + 1; j < nodes.length; j++) {
+                        const dx = nodes[i].x - nodes[j].x;
+                        const dy = nodes[i].y - nodes[j].y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < 150) {
+                            ctx.beginPath();
+                            ctx.moveTo(nodes[i].x, nodes[i].y);
+                            ctx.lineTo(nodes[j].x, nodes[j].y);
+                            ctx.strokeStyle = `rgba(111, 66, 193, ${0.2 * (1 - distance / 150)})`;
+                            ctx.lineWidth = 0.5;
+                            ctx.stroke();
+                        }
+                    }
+                }
+                
+                requestAnimationFrame(drawWeb);
+            }
+            
+            // 监听窗口大小变化
+            window.addEventListener('resize', () => {
+                width = window.innerWidth;
+                height = window.innerHeight;
+                canvas.width = width;
+                canvas.height = height;
+            });
+            
+            // 开始动画
+            drawWeb();
+        }
+        
+        // 页面加载时初始化效果
+        window.addEventListener('load', () => {
+            createParticles();
+            initWebCanvas();
+        });
+    </script>
+</body>
+</html> 

@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# 设置用户为root
+USER root
+
 WORKDIR /app
 
 COPY requirements.txt .

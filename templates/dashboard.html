@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abacus Chat Proxy - 仪表盘</title>
+    <style>
+        :root {
+            --primary-color: #6f42c1;
+            --secondary-color: #4a32a8;
+            --accent-color: #5e85f1;
+            --bg-color: #0a0a1a;
+            --text-color: #e6e6ff;
+            --card-bg: rgba(30, 30, 60, 0.7);
+            --input-bg: rgba(40, 40, 80, 0.6);
+            --success-color: #36d399;
+            --warning-color: #fbbd23;
+            --error-color: #f87272;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            min-height: 100vh;
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 20% 35%, rgba(111, 66, 193, 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 80% 10%, rgba(70, 111, 171, 0.1) 0%, transparent 40%);
+            color: var(--text-color);
+            position: relative;
+            overflow-x: hidden;
+        }
+        
+        /* 动态背景网格 */
+        .grid-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: linear-gradient(rgba(50, 50, 100, 0.05) 1px, transparent 1px),
+                            linear-gradient(90deg, rgba(50, 50, 100, 0.05) 1px, transparent 1px);
+            background-size: 30px 30px;
+            z-index: -1;
+            animation: grid-move 20s linear infinite;
+        }
+        
+        @keyframes grid-move {
+            0% {
+                transform: translateY(0);
+            }
+            100% {
+                transform: translateY(30px);
+            }
+        }
+        
+        /* 顶部导航栏 */
+        .navbar {
+            padding: 1rem 2rem;
+            background: rgba(15, 15, 30, 0.8);
+            backdrop-filter: blur(10px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .navbar-brand {
+            display: flex;
+            align-items: center;
+            text-decoration: none;
+            color: var(--text-color);
+        }
+        
+        .navbar-logo {
+            font-size: 1.5rem;
+            margin-right: 0.75rem;
+            animation: pulse 2s infinite alternate;
+        }
+        
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                text-shadow: 0 0 5px rgba(111, 66, 193, 0.5);
+            }
+            100% {
+                transform: scale(1.05);
+                text-shadow: 0 0 15px rgba(111, 66, 193, 0.8);
+            }
+        }
+        
+        .navbar-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            background: linear-gradient(45deg, #6f42c1, #5181f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .navbar-actions {
+            display: flex;
+            gap: 1rem;
+        }
+        
+        .btn-logout {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-color);
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .btn-logout:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* 主内容区域 */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        /* 信息卡片样式 */
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            animation: card-fade-in 0.6s ease-out;
+        }
+        
+        @keyframes card-fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .card-header {
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        
+        .card-icon {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(45deg, rgba(111, 66, 193, 0.2), rgba(94, 133, 241, 0.2));
+            border-radius: 8px;
+            font-size: 1.25rem;
+        }
+        
+        /* 状态项样式 */
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        
+        .status-label {
+            color: rgba(230, 230, 255, 0.7);
+            font-weight: 500;
+        }
+        
+        .status-value {
+            color: var(--text-color);
+            font-weight: 600;
+        }
+        
+        .status-value.success {
+            color: var(--success-color);
+        }
+        
+        .status-value.warning {
+            color: var(--warning-color);
+        }
+        
+        .status-value.danger {
+            color: var(--error-color);
+        }
+        
+        /* 模型标签 */
+        .models-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        
+        .model-tag {
+            background: rgba(111, 66, 193, 0.2);
+            padding: 0.25rem 0.75rem;
+            border-radius: 16px;
+            font-size: 0.875rem;
+            color: var(--text-color);
+            border: 1px solid rgba(111, 66, 193, 0.3);
+        }
+        
+        /* 表格样式 */
+        .table-container {
+            overflow-x: auto;
+            margin-top: 1rem;
+        }
+        
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+        
+        .data-table th {
+            background-color: rgba(50, 50, 100, 0.3);
+            padding: 0.75rem 1rem;
+            font-weight: 600;
+            color: rgba(230, 230, 255, 0.9);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .data-table td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .data-table tbody tr {
+            transition: background-color 0.2s;
+        }
+        
+        .data-table tbody tr:hover {
+            background-color: rgba(50, 50, 100, 0.2);
+        }
+        
+        /* 特殊值样式 */
+        .token-count {
+            font-family: 'Consolas', monospace;
+            color: var(--accent-color);
+            font-weight: bold;
+        }
+        
+        .call-count {
+            font-family: 'Consolas', monospace;
+            color: var(--success-color);
+            font-weight: bold;
+        }
+        
+        .compute-points {
+            font-family: 'Consolas', monospace;
+            color: var(--primary-color);
+            font-weight: bold;
+        }
+        
+        /* 进度条 */
+        .progress-container {
+            width: 100%;
+            height: 8px;
+            background-color: rgba(100, 100, 150, 0.2);
+            border-radius: 4px;
+            margin-top: 0.5rem;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            border-radius: 4px;
+            background: linear-gradient(90deg, var(--primary-color), var(--accent-color));
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .progress-bar.warning {
+            background: linear-gradient(90deg, #fbbd23, #f59e0b);
+        }
+        
+        .progress-bar.danger {
+            background: linear-gradient(90deg, #f87272, #ef4444);
+        }
+        
+        /* 添加进度条闪光效果 */
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, 
+                transparent, 
+                rgba(255, 255, 255, 0.2), 
+                transparent);
+            animation: progress-shine 3s infinite;
+        }
+        
+        @keyframes progress-shine {
+            0% {
+                left: -100%;
+            }
+            50%, 100% {
+                left: 100%;
+            }
+        }
+        
+        /* API端点卡片 */
+        .endpoint-item {
+            background: rgba(50, 50, 100, 0.2);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            border-left: 3px solid var(--primary-color);
+        }
+        
+        .endpoint-url {
+            font-family: 'Consolas', monospace;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 0.5rem;
+            border-radius: 4px;
+            margin-top: 0.25rem;
+            display: inline-block;
+            color: var(--text-color);
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        
+        .endpoint-url:hover {
+            background: rgba(111, 66, 193, 0.3);
+            color: var(--text-color);
+        }
+        
+        /* 响应式布局 */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+        
+        /* 页脚 */
+        .footer {
+            text-align: center;
+            padding: 2rem 0;
+            color: rgba(230, 230, 255, 0.5);
+            font-size: 0.9rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            margin-top: 2rem;
+        }
+        
+        /* 悬浮图标按钮 */
+        .float-btn {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, var(--primary-color), var(--accent-color));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 20px rgba(111, 66, 193, 0.4);
+            cursor: pointer;
+            transition: all 0.3s;
+            z-index: 50;
+        }
+        
+        .float-btn:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(111, 66, 193, 0.5);
+        }
+        
+        /* 滚动条美化 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(50, 50, 100, 0.1);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgba(111, 66, 193, 0.5);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(111, 66, 193, 0.7);
+        }
+        
+        /* 模型统计折叠样式 */
+        .hidden-model {
+            display: none;
+        }
+        
+        .btn-toggle {
+            background: rgba(111, 66, 193, 0.2);
+            border: 1px solid rgba(111, 66, 193, 0.3);
+            border-radius: 4px;
+            padding: 0.3rem 0.7rem;
+            color: rgba(230, 230, 255, 0.9);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.85rem;
+            margin-left: auto;
+        }
+        
+        .btn-toggle:hover {
+            background: rgba(111, 66, 193, 0.4);
+        }
+        
+        /* Token注释样式 */
+        .token-note {
+            margin-top: 0.75rem;
+            color: rgba(230, 230, 255, 0.6);
+            font-style: italic;
+            line-height: 1.4;
+            padding: 0.5rem;
+            border-top: 1px dashed rgba(255, 255, 255, 0.1);
+        }
+        
+        .token-model-table {
+            margin-top: 1rem;
+        }
+        
+        /* Token计算方式标签 */
+        .token-method {
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        
+        .token-method.tiktoken {
+            background: rgba(54, 211, 153, 0.2);
+            color: var(--success-color);
+            border: 1px solid rgba(54, 211, 153, 0.3);
+        }
+        
+        .token-method.estimate {
+            background: rgba(251, 189, 35, 0.2);
+            color: var(--warning-color);
+            border: 1px solid rgba(251, 189, 35, 0.3);
+        }
+        
+        /* 时间日期样式 */
+        .datetime {
+            font-family: 'Consolas', monospace;
+            color: rgba(230, 230, 255, 0.8);
+            font-size: 0.9rem;
+        }
+        
+        /* 媒体查询 */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .navbar {
+                padding: 1rem;
+            }
+            
+            .card {
+                padding: 1rem;
+            }
+            
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="grid-background"></div>
+    
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">
+            <span class="navbar-logo">🤖</span>
+            <span class="navbar-title">Abacus Chat Proxy</span>
+        </a>
+        <div class="navbar-actions">
+            <a href="/logout" class="btn-logout">
+                <span>退出</span>
+                <span>↗</span>
+            </a>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">
+                    <span class="card-icon">📊</span>
+                    系统状态
+                </h2>
+            </div>
+            <div class="status-item">
+                <span class="status-label">服务状态</span>
+                <span class="status-value success">运行中</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">运行时间</span>
+                <span class="status-value">{{ uptime }}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">健康检查次数</span>
+                <span class="status-value">{{ health_checks }}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">已配置用户数</span>
+                <span class="status-value">{{ user_count }}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">可用模型</span>
+                <div class="models-list">
+                    {% for model in models %}
+                    <span class="model-tag">{{ model }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <span class="card-icon">💰</span>
+                        计算点总计
+                    </h2>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">总计算点</span>
+                    <span class="status-value compute-points">{{ compute_points.total|int }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">已使用</span>
+                    <span class="status-value compute-points">{{ compute_points.used|int }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">剩余</span>
+                    <span class="status-value compute-points">{{ compute_points.left|int }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">使用比例</span>
+                    <div style="width: 100%; text-align: right;">
+                        <span class="status-value compute-points {% if compute_points.percentage > 80 %}danger{% elif compute_points.percentage > 50 %}warning{% endif %}">
+                            {{ compute_points.percentage }}%
+                        </span>
+                        <div class="progress-container">
+                            <div class="progress-bar {% if compute_points.percentage > 80 %}danger{% elif compute_points.percentage > 50 %}warning{% endif %}" style="width: {{ compute_points.percentage }}%"></div>
+                        </div>
+                    </div>
+                </div>
+                {% if compute_points.last_update %}
+                <div class="status-item">
+                    <span class="status-label">最后更新时间</span>
+                    <span class="status-value">{{ compute_points.last_update.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+                </div>
+                {% endif %}
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <span class="card-icon">🔍</span>
+                        Token 使用统计
+                    </h2>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">总输入Token</span>
+                    <span class="status-value token-count">{{ total_tokens.prompt|int }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">总输出Token</span>
+                    <span class="status-value token-count">{{ total_tokens.completion|int }}</span>
+                </div>
+                <div class="token-note">
+                    <small>* 以上数据仅统计通过本代理使用的token数量，不包含在Abacus官网直接使用的token。数值为粗略估计，可能与实际计费有差异。</small>
+                </div>
+                <div class="table-container">
+                    <table class="data-table token-model-table">
+                        <thead>
+                            <tr>
+                                <th>模型</th>
+                                <th>调用次数</th>
+                                <th>输入Token</th>
+                                <th>输出Token</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for model, stats in model_stats.items() %}
+                            <tr>
+                                <td>{{ model }}</td>
+                                <td class="call-count">{{ stats.count }}</td>
+                                <td class="token-count">{{ stats.prompt_tokens|int }}</td>
+                                <td class="token-count">{{ stats.completion_tokens|int }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        {% if users_compute_points|length > 0 %}
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">
+                    <span class="card-icon">👥</span>
+                    用户计算点详情
+                </h2>
+            </div>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>用户</th>
+                            <th>总计算点</th>
+                            <th>已使用</th>
+                            <th>剩余</th>
+                            <th>使用比例</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users_compute_points %}
+                        <tr>
+                            <td>用户 {{ user.user_id }}</td>
+                            <td class="compute-points">{{ user.total|int }}</td>
+                            <td class="compute-points">{{ user.used|int }}</td>
+                            <td class="compute-points">{{ user.left|int }}</td>
+                            <td>
+                                <div style="width: 100%; position: relative;">
+                                    <span class="status-value compute-points {% if user.percentage > 80 %}danger{% elif user.percentage > 50 %}warning{% endif %}">
+                                        {{ user.percentage }}%
+                                    </span>
+                                    <div class="progress-container">
+                                        <div class="progress-bar {% if user.percentage > 80 %}danger{% elif user.percentage > 50 %}warning{% endif %}" style="width: {{ user.percentage }}%"></div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+        
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">
+                    <span class="card-icon">📊</span>
+                    计算点使用日志
+                </h2>
+            </div>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            {% for key, value in compute_points_log.columns.items() %}
+                            <th>{{ value }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in compute_points_log.log %}
+                        <tr>
+                            {% for key, value in compute_points_log.columns.items() %}
+                            <td class="compute-points">{{ entry.get(key, 0) }}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">
+                    <span class="card-icon">📈</span>
+                    模型调用记录
+                </h2>
+                <button id="toggleModelStats" class="btn-toggle">显示全部</button>
+            </div>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>调用时间 (北京时间)</th>
+                            <th>模型</th>
+                            <th>输入Token</th>
+                            <th>输出Token</th>
+                            <th>计算方式</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in model_usage_records|reverse %}
+                        <tr class="model-row {% if loop.index > 10 %}hidden-model{% endif %}">
+                            <td class="datetime">{{ record.call_time }}</td>
+                            <td>{{ record.model }}</td>
+                            <td class="token-count">{{ record.prompt_tokens|int }}</td>
+                            <td class="token-count">{{ record.completion_tokens|int }}</td>
+                            <td>
+                                {% if record.calculation_method == "tiktoken" %}
+                                <span class="token-method tiktoken">精确</span>
+                                {% else %}
+                                <span class="token-method estimate">估算</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div class="token-note">
+                    <small>* Token计算方式：<span class="token-method tiktoken">精确</span> 表示使用tiktoken准确计算，<span class="token-method estimate">估算</span> 表示使用估算方法(约4字符=1token)。所有统计数据仅供参考，不代表实际计费标准。</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">
+                    <span class="card-icon">📡</span>
+                    API 端点
+                </h2>
+            </div>
+            <div class="endpoint-item">
+                <p>获取模型列表：</p>
+                {% if space_url %}
+                <a href="{{ space_url }}/v1/models" class="endpoint-url" target="_blank">GET {{ space_url }}/v1/models</a>
+                {% else %}
+                <a href="/v1/models" class="endpoint-url" target="_blank">GET /v1/models</a>
+                {% endif %}
+            </div>
+            <div class="endpoint-item">
+                <p>聊天补全：</p>
+                {% if space_url %}
+                <code class="endpoint-url">POST {{ space_url }}/v1/chat/completions</code>
+                {% else %}
+                <code class="endpoint-url">POST /v1/chat/completions</code>
+                {% endif %}
+            </div>
+            <div class="endpoint-item">
+                <p>健康检查：</p>
+                {% if space_url %}
+                <a href="{{ space_url }}/health" class="endpoint-url" target="_blank">GET {{ space_url }}/health</a>
+                {% else %}
+                <a href="/health" class="endpoint-url" target="_blank">GET /health</a>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>© {{ year }} Abacus Chat Proxy. 保持简单，保持可靠。</p>
+        </div>
+    </div>
+    
+    <a href="#" class="float-btn" title="回到顶部">↑</a>
+    
+    <script>
+        // 回到顶部按钮
+        document.querySelector('.float-btn').addEventListener('click', (e) => {
+            e.preventDefault();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+        
+        // 显示/隐藏回到顶部按钮
+        window.addEventListener('scroll', () => {
+            const floatBtn = document.querySelector('.float-btn');
+            if (window.pageYOffset > 300) {
+                floatBtn.style.opacity = '1';
+            } else {
+                floatBtn.style.opacity = '0';
+            }
+        });
+        
+        // 初始化隐藏回到顶部按钮
+        document.querySelector('.float-btn').style.opacity = '0';
+        
+        // 模型统计折叠功能
+        const toggleBtn = document.getElementById('toggleModelStats');
+        const hiddenModels = document.querySelectorAll('.hidden-model');
+        let isExpanded = false;
+        
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => {
+                hiddenModels.forEach(model => {
+                    model.classList.toggle('hidden-model');
+                });
+                
+                isExpanded = !isExpanded;
+                toggleBtn.textContent = isExpanded ? '隐藏部分' : '显示全部';
+            });
+        }
+    </script>
+</body>
+</html> 

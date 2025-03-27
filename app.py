@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Response, render_template_string
+from flask import Flask, request, jsonify, Response, render_template_string, render_template, redirect, url_for, session as flask_session
 import requests
 import time
 import json
@@ -11,17 +11,20 @@ import hashlib
 import jwt  
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 import tiktoken  # 导入tiktoken来计算token数量
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates')
+app.secret_key = os.environ.get("SECRET_KEY", "abacus_chat_proxy_secret_key")
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 
 API_ENDPOINT_URL = "https://abacus.ai/api/v0/describeDeployment"
 MODEL_LIST_URL = "https://abacus.ai/api/v0/listExternalApplications"
 CHAT_URL = "https://apps.abacus.ai/api/_chatLLMSendMessageSSE"
 USER_INFO_URL = "https://abacus.ai/api/v0/_getUserInfo"
-COMPUTE_POINTS_URL = "https://apps.abacus.ai/api/_getOrganizationComputePoints"  # 添加计算点API
+COMPUTE_POINTS_URL = "https://apps.abacus.ai/api/_getOrganizationComputePoints"
+COMPUTE_POINTS_LOG_URL = "https://abacus.ai/api/v0/_getOrganizationComputePointLog"
 
 
 USER_AGENTS = [
@@ -34,7 +37,6 @@ USER_NUM = 0
 USER_DATA = []
 CURRENT_USER = -1
 MODELS = set()
-COMPUTE_POINTS = []  # 存储每个用户的计算点信息
 
 
 TRACE_ID = "3042e28b3abf475d8d973c7e904935af"
@@ -53,309 +55,64 @@ total_tokens = {
     "total": 0         # 总token统计
 }
 
-# 缓存计算点信息和最后刷新时间
-cached_compute_points = []
-last_compute_points_refresh = None
+# 模型调用记录
+model_usage_records = []  # 每次调用详细记录
+MODEL_USAGE_RECORDS_FILE = "model_usage_records.json"  # 调用记录保存文件
 
+# 计算点信息
+compute_points = {
+    "left": 0,          # 剩余计算点
+    "total": 0,         # 总计算点
+    "used": 0,          # 已使用计算点
+    "percentage": 0,    # 使用百分比
+    "last_update": None # 最后更新时间
+}
 
-# HTML模板
-INDEX_HTML = """
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Abacus Chat Proxy</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background: #f5f5f5;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 2rem;
-        }
-        .container {
-            max-width: 800px;
-            width: 100%;
-            background: white;
-            padding: 2rem;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        h1 {
-            color: #2c3e50;
-            margin-bottom: 1rem;
-            text-align: center;
-            font-size: 2.5rem;
-        }
-        h2 {
-            color: #3a4a5c;
-            margin: 1.5rem 0 1rem;
-            font-size: 1.5rem;
-        }
-        .status-card {
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 1.5rem;
-            margin: 1.5rem 0;
-        }
-        .status-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.5rem 0;
-            border-bottom: 1px solid #dee2e6;
-        }
-        .status-item:last-child {
-            border-bottom: none;
-        }
-        .status-label {
-            color: #6c757d;
-            font-weight: 500;
-        }
-        .status-value {
-            color: #28a745;
-            font-weight: 600;
-        }
-        .status-value.warning {
-            color: #ffc107;
-        }
-        .status-value.error {
-            color: #dc3545;
-        }
-        .footer {
-            margin-top: 2rem;
-            text-align: center;
-            color: #6c757d;
-        }
-        .models-list {
-            list-style: none;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-top: 0.5rem;
-        }
-        .model-tag {
-            background: #e9ecef;
-            padding: 0.25rem 0.75rem;
-            border-radius: 16px;
-            font-size: 0.875rem;
-            color: #495057;
-        }
-        .endpoints {
-            margin-top: 2rem;
-        }
-        .endpoint-item {
-            background: #f8f9fa;
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-        }
-        .endpoint-url {
-            font-family: monospace;
-            background: #e9ecef;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-        }
-        .usage-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 1rem;
-        }
-        .usage-table th, .usage-table td {
-            padding: 0.5rem;
-            text-align: left;
-            border-bottom: 1px solid #dee2e6;
-        }
-        .usage-table th {
-            background-color: #e9ecef;
-            font-weight: 600;
-            color: #495057;
-        }
-        .usage-table tbody tr:hover {
-            background-color: #f1f3f5;
-        }
-        .token-count {
-            font-family: monospace;
-            color: #0366d6;
-        }
-        .call-count {
-            font-family: monospace;
-            color: #28a745;
-        }
-        .compute-points {
-            font-family: monospace;
-            color: #6f42c1;
-            font-weight: bold;
-        }
-        .refresh-btn {
-            background: #0366d6;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.875rem;
-            transition: background-color 0.2s;
-            margin-left: 1rem;
-        }
-        .refresh-btn:hover {
-            background: #0056b3;
-        }
-        .refresh-time {
-            font-size: 0.75rem;
-            color: #6c757d;
-            margin-top: 0.25rem;
-        }
-        @media (max-width: 768px) {
-            .container {
-                padding: 1rem;
-            }
-            h1 {
-                font-size: 2rem;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🤖 Abacus Chat Proxy</h1>
-        
-        <div class="status-card">
-            <div class="status-item">
-                <span class="status-label">服务状态</span>
-                <span class="status-value">运行中</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">运行时间</span>
-                <span class="status-value">{{ uptime }}</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">健康检查次数</span>
-                <span class="status-value">{{ health_checks }}</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">已配置用户数</span>
-                <span class="status-value">{{ user_count }}</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">可用模型</span>
-                <div class="models-list">
-                    {% for model in models %}
-                    <span class="model-tag">{{ model }}</span>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
+# 计算点使用日志
+compute_points_log = {
+    "columns": {},      # 列名
+    "log": []           # 日志数据
+}
 
-        <h2>💰 计算点余额</h2>
-        <div class="status-card">
-            <table class="usage-table">
-                <thead>
-                    <tr>
-                        <th>用户ID</th>
-                        <th>计算点余额</th>
-                        <th>状态</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for point_info in compute_points %}
-                    <tr>
-                        <td>用户 {{ point_info.user_id }}</td>
-                        <td class="compute-points">{{ point_info.points }}</td>
-                        <td>
-                            {% if point_info.status == 'success' %}
-                            <span class="status-value">正常</span>
-                            {% else %}
-                            <span class="status-value error">{{ point_info.message }}</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            <div class="refresh-time">
-                <p>上次刷新时间: {{ refresh_time }}</p>
-                <form method="GET" action="/">
-                    <button type="submit" name="refresh_points" value="true" class="refresh-btn">刷新计算点信息</button>
-                </form>
-            </div>
-        </div>
-
-        <h2>🔍 模型使用统计</h2>
-        <div class="status-card">
-            <div class="status-item">
-                <span class="status-label">总Token使用量</span>
-                <span class="status-value token-count">{{ total_tokens.total|int }}</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">输入Token</span>
-                <span class="status-value token-count">{{ total_tokens.prompt|int }}</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">输出Token</span>
-                <span class="status-value token-count">{{ total_tokens.completion|int }}</span>
-            </div>
-            
-            <table class="usage-table">
-                <thead>
-                    <tr>
-                        <th>模型</th>
-                        <th>调用次数</th>
-                        <th>输入Token</th>
-                        <th>输出Token</th>
-                        <th>总Token</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for model, stats in model_stats.items() %}
-                    <tr>
-                        <td>{{ model }}</td>
-                        <td class="call-count">{{ stats.count }}</td>
-                        <td class="token-count">{{ stats.prompt_tokens|int }}</td>
-                        <td class="token-count">{{ stats.completion_tokens|int }}</td>
-                        <td class="token-count">{{ stats.total_tokens|int }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-
-        <div class="endpoints">
-            <h2>📡 API端点</h2>
-            <div class="endpoint-item">
-                <p>获取模型列表：</p>
-                <code class="endpoint-url">GET /v1/models</code>
-            </div>
-            <div class="endpoint-item">
-                <p>聊天补全：</p>
-                <code class="endpoint-url">POST /v1/chat/completions</code>
-            </div>
-            <div class="endpoint-item">
-                <p>健康检查：</p>
-                <code class="endpoint-url">GET /health</code>
-            </div>
-        </div>
-
-        <div class="footer">
-            <p>© {{ year }} Abacus Chat Proxy. 保持简单，保持可靠。</p>
-        </div>
-    </div>
-</body>
-</html>
-"""
+# 多用户计算点信息
+users_compute_points = []
 
 # 记录启动时间
-START_TIME = datetime.now()
+START_TIME = datetime.utcnow() + timedelta(hours=8)  # 北京时间
+
+
+# 自定义JSON编码器，处理datetime对象
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.strftime('%Y-%m-%d %H:%M:%S')
+        return super(DateTimeEncoder, self).default(obj)
+
+
+# 加载模型调用记录
+def load_model_usage_records():
+    global model_usage_records
+    try:
+        if os.path.exists(MODEL_USAGE_RECORDS_FILE):
+            with open(MODEL_USAGE_RECORDS_FILE, 'r', encoding='utf-8') as f:
+                records = json.load(f)
+                if isinstance(records, list):
+                    model_usage_records = records
+                    print(f"成功加载 {len(model_usage_records)} 条模型调用记录")
+                else:
+                    print("调用记录文件格式不正确，初始化为空列表")
+    except Exception as e:
+        print(f"加载模型调用记录失败: {e}")
+        model_usage_records = []
+
+# 保存模型调用记录
+def save_model_usage_records():
+    try:
+        with open(MODEL_USAGE_RECORDS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(model_usage_records, f, ensure_ascii=False, indent=2, cls=DateTimeEncoder)
+        print(f"成功保存 {len(model_usage_records)} 条模型调用记录")
+    except Exception as e:
+        print(f"保存模型调用记录失败: {e}")
 
 
 def resolve_config():
@@ -413,8 +170,17 @@ def require_auth(f):
     def decorated(*args, **kwargs):
         if not PASSWORD:
             return f(*args, **kwargs)
+        
+        # 检查Flask会话是否已登录
+        if flask_session.get('logged_in'):
+            return f(*args, **kwargs)
+            
+        # 如果是API请求，检查Authorization头
         auth = request.authorization
         if not auth or not check_auth(auth.token):
+            # 如果是浏览器请求，重定向到登录页面
+            if request.headers.get('Accept', '').find('text/html') >= 0:
+                return redirect(url_for('login'))
             return jsonify({"error": "Unauthorized access"}), 401
         return f(*args, **kwargs)
 
@@ -555,7 +321,7 @@ def get_model_map(session, cookies, session_token):
 
 def init_session():
     get_password()
-    global USER_NUM, MODELS, USER_DATA, COMPUTE_POINTS
+    global USER_NUM, MODELS, USER_DATA
     config_list = resolve_config()
     user_num = len(config_list)
     all_models = set()
@@ -575,7 +341,6 @@ def init_session():
             model_map, models_set = get_model_map(session, cookies, session_token)
             all_models.update(models_set)
             USER_DATA.append((session, cookies, session_token, conversation_id, model_map))
-            COMPUTE_POINTS.append((cookies, conversation_id))
         except Exception as e:
             print(f"配置用户 {i+1} 失败: {e}")
             continue
@@ -1051,34 +816,12 @@ def keep_alive():
 
 @app.route("/", methods=["GET"])
 def index():
-    uptime = datetime.now() - START_TIME
-    days = uptime.days
-    hours, remainder = divmod(uptime.seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
+    # 如果需要密码且用户未登录，重定向到登录页面
+    if PASSWORD and not flask_session.get('logged_in'):
+        return redirect(url_for('login'))
     
-    if days > 0:
-        uptime_str = f"{days}天 {hours}小时 {minutes}分钟"
-    elif hours > 0:
-        uptime_str = f"{hours}小时 {minutes}分钟"
-    else:
-        uptime_str = f"{minutes}分钟 {seconds}秒"
-    
-    # 获取计算点信息
-    refresh_points = request.args.get('refresh_points') == 'true'
-    compute_points_data = get_compute_points() if refresh_points else get_cached_compute_points()
-    
-    return render_template_string(
-        INDEX_HTML,
-        uptime=uptime_str,
-        health_checks=health_check_counter,
-        user_count=USER_NUM,
-        models=sorted(list(MODELS)),
-        year=datetime.now().year,
-        model_stats=model_usage_stats,
-        total_tokens=total_tokens,
-        compute_points=compute_points_data,
-        refresh_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    )
+    # 否则重定向到仪表盘
+    return redirect(url_for('dashboard'))
 
 
 # 获取OpenAI的tokenizer来计算token数
@@ -1097,7 +840,32 @@ def num_tokens_from_string(string, model="gpt-3.5-turbo"):
 
 # 更新模型使用统计
 def update_model_stats(model, prompt_tokens, completion_tokens):
-    global model_usage_stats, total_tokens
+    global model_usage_stats, total_tokens, model_usage_records
+    
+    # 添加调用记录
+    # 获取UTC时间
+    utc_now = datetime.utcnow()
+    # 转换为北京时间 (UTC+8)
+    beijing_time = utc_now + timedelta(hours=8)
+    call_time = beijing_time.strftime('%Y-%m-%d %H:%M:%S')  # 北京时间
+    
+    record = {
+        "model": model,
+        "call_time": call_time,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "calculation_method": "tiktoken" if any(x in model.lower() for x in ["gpt", "claude"]) or model in ["llama-3", "mistral", "gemma"] else "estimate"
+    }
+    model_usage_records.append(record)
+    
+    # 限制记录数量，保留最新的500条
+    if len(model_usage_records) > 500:
+        model_usage_records.pop(0)
+    
+    # 保存调用记录到本地文件
+    save_model_usage_records()
+    
+    # 更新聚合统计
     if model not in model_usage_stats:
         model_usage_stats[model] = {
             "count": 0,
@@ -1118,34 +886,35 @@ def update_model_stats(model, prompt_tokens, completion_tokens):
 
 # 获取计算点信息
 def get_compute_points():
-    global COMPUTE_POINTS
-    compute_points_info = []
+    global compute_points, USER_DATA, users_compute_points
     
-    for i, (cookies, conversation_id) in enumerate(COMPUTE_POINTS):
+    if USER_NUM == 0:
+        return
+    
+    # 清空用户计算点列表
+    users_compute_points = []
+    
+    # 累计总计算点
+    total_left = 0
+    total_points = 0
+    
+    # 获取每个用户的计算点信息
+    for i, user_data in enumerate(USER_DATA):
         try:
-            # 使用对应的cookies获取用户的session_token
-            session = requests.Session()
-            session_token = refresh_token(session, cookies)
+            session, cookies, session_token, _, _ = user_data
             
-            if not session_token:
-                compute_points_info.append({
-                    "user_id": i + 1,
-                    "status": "error",
-                    "message": "获取token失败",
-                    "points": 0,
-                    "refreshed_at": datetime.now().isoformat()
-                })
-                continue
-                
-            # 设置请求头
-            trace_id = str(uuid.uuid4()).replace('-', '')
-            sentry_trace = f"{trace_id}-{str(uuid.uuid4())[:16]}"
+            # 检查token是否有效
+            if is_token_expired(session_token):
+                session_token = refresh_token(session, cookies)
+                if not session_token:
+                    print(f"用户{i+1}刷新token失败，无法获取计算点信息")
+                    continue
+                USER_DATA[i] = (session, cookies, session_token, user_data[3], user_data[4])
             
             headers = {
                 "accept": "application/json, text/plain, */*",
                 "accept-language": "zh-CN,zh;q=0.9",
-                "baggage": f"sentry-environment=production,sentry-release=93da8385541a6ce339b1f41b0c94428c70657e22,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id},sentry-sample_rate=0.05,sentry-sampled=false",
-                "content-type": "application/json",
+                "baggage": f"sentry-environment=production,sentry-release=93da8385541a6ce339b1f41b0c94428c70657e22,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={TRACE_ID}",
                 "reai-ui": "1",
                 "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
                 "sec-ch-ua-mobile": "?0",
@@ -1153,78 +922,206 @@ def get_compute_points():
                 "sec-fetch-dest": "empty",
                 "sec-fetch-mode": "cors",
                 "sec-fetch-site": "same-origin",
-                "sentry-trace": f"{trace_id}-{str(uuid.uuid4())[:16]}-0",
+                "sentry-trace": SENTRY_TRACE,
                 "session-token": session_token,
                 "x-abacus-org-host": "apps",
-                "cookie": cookies,
-                "user-agent": random.choice(USER_AGENTS)
+                "cookie": cookies
             }
             
-            # 发送请求获取计算点信息
-            response = session.get(COMPUTE_POINTS_URL, headers=headers)
+            response = session.get(
+                COMPUTE_POINTS_URL,
+                headers=headers
+            )
             
             if response.status_code == 200:
                 result = response.json()
-                if result.get("success", False):
-                    points_data = result.get("result", {})
-                    compute_points_info.append({
-                        "user_id": i + 1,
-                        "status": "success",
-                        "data": points_data,
-                        "points": points_data.get("currentPoints", 0),
-                        "refreshed_at": datetime.now().isoformat()
-                    })
+                if result.get("success") and "result" in result:
+                    data = result["result"]
+                    left = data.get("computePointsLeft", 0)
+                    total = data.get("totalComputePoints", 0)
+                    used = total - left
+                    percentage = round((used / total) * 100, 2) if total > 0 else 0
+                    
+                    # 获取北京时间
+                    beijing_now = datetime.utcnow() + timedelta(hours=8)
+                    
+                    # 添加到用户列表
+                    user_points = {
+                        "user_id": i + 1,  # 用户ID从1开始
+                        "left": left,
+                        "total": total,
+                        "used": used,
+                        "percentage": percentage,
+                        "last_update": beijing_now
+                    }
+                    users_compute_points.append(user_points)
+                    
+                    # 累计总数
+                    total_left += left
+                    total_points += total
+                    
+                    print(f"用户{i+1}计算点信息更新成功: 剩余 {left}, 总计 {total}")
+                    
+                    # 对于第一个用户，获取计算点使用日志
+                    if i == 0:
+                        get_compute_points_log(session, cookies, session_token)
                 else:
-                    compute_points_info.append({
-                        "user_id": i + 1,
-                        "status": "error",
-                        "message": result.get("error", "未知错误"),
-                        "points": 0,
-                        "refreshed_at": datetime.now().isoformat()
-                    })
+                    print(f"获取用户{i+1}计算点信息失败: {result.get('error', '未知错误')}")
             else:
-                compute_points_info.append({
-                    "user_id": i + 1,
-                    "status": "error",
-                    "message": f"API请求失败: {response.status_code}",
-                    "points": 0,
-                    "refreshed_at": datetime.now().isoformat()
-                })
-                
+                print(f"获取用户{i+1}计算点信息失败，状态码: {response.status_code}")
         except Exception as e:
-            compute_points_info.append({
-                "user_id": i + 1,
-                "status": "error",
-                "message": f"获取计算点异常: {str(e)}",
-                "points": 0,
-                "refreshed_at": datetime.now().isoformat()
-            })
+            print(f"获取用户{i+1}计算点信息异常: {e}")
     
-    return compute_points_info
+    # 更新全局计算点信息（所有用户总和）
+    if users_compute_points:
+        compute_points["left"] = total_left
+        compute_points["total"] = total_points
+        compute_points["used"] = total_points - total_left
+        compute_points["percentage"] = round((compute_points["used"] / compute_points["total"]) * 100, 2) if compute_points["total"] > 0 else 0
+        compute_points["last_update"] = datetime.utcnow() + timedelta(hours=8)  # 北京时间
+        print(f"所有用户计算点总计: 剩余 {total_left}, 总计 {total_points}")
 
-
-# 获取缓存的计算点信息，如果缓存不存在或超过30分钟则重新获取
-def get_cached_compute_points():
-    global cached_compute_points, last_compute_points_refresh
+# 获取计算点使用日志
+def get_compute_points_log(session, cookies, session_token):
+    global compute_points_log
     
-    current_time = datetime.now()
-    
-    # 如果缓存不存在或超过30分钟，重新获取
-    if (last_compute_points_refresh is None or 
-        (current_time - last_compute_points_refresh).total_seconds() > 1800 or
-        not cached_compute_points):
+    try:
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "zh-CN,zh;q=0.9",
+            "content-type": "application/json",
+            "reai-ui": "1",
+            "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "session-token": session_token,
+            "x-abacus-org-host": "apps",
+            "cookie": cookies
+        }
         
-        cached_compute_points = get_compute_points()
-        last_compute_points_refresh = current_time
-        print("刷新计算点信息")
-    else:
-        print(f"使用缓存的计算点信息，距离上次刷新: {(current_time - last_compute_points_refresh).total_seconds():.0f}秒")
+        response = session.post(
+            COMPUTE_POINTS_LOG_URL,
+            headers=headers,
+            json={"byLlm": True}
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("success") and "result" in result:
+                data = result["result"]
+                compute_points_log["columns"] = data.get("columns", {})
+                compute_points_log["log"] = data.get("log", [])
+                print(f"计算点使用日志更新成功，获取到 {len(compute_points_log['log'])} 条记录")
+            else:
+                print(f"获取计算点使用日志失败: {result.get('error', '未知错误')}")
+        else:
+            print(f"获取计算点使用日志失败，状态码: {response.status_code}")
+    except Exception as e:
+        print(f"获取计算点使用日志异常: {e}")
+
+
+# 添加登录相关路由
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        password = request.form.get("password")
+        if password and hashlib.sha256(password.encode()).hexdigest() == PASSWORD:
+            flask_session['logged_in'] = True
+            flask_session.permanent = True
+            return redirect(url_for('dashboard'))
+        else:
+            # 密码错误时提示使用环境变量密码
+            error = "密码不正确。请使用设置的环境变量 password 或 password.txt 中的值作为密码和API认证密钥。"
     
-    return cached_compute_points
+    # 传递空间URL给模板
+    return render_template('login.html', error=error, space_url=SPACE_URL)
+
+
+@app.route("/logout")
+def logout():
+    flask_session.clear()
+    return redirect(url_for('login'))
+
+
+@app.route("/dashboard")
+@require_auth
+def dashboard():
+    # 在每次访问仪表盘时更新计算点信息
+    get_compute_points()
+    
+    # 计算运行时间（使用北京时间）
+    beijing_now = datetime.utcnow() + timedelta(hours=8)
+    uptime = beijing_now - START_TIME
+    days = uptime.days
+    hours, remainder = divmod(uptime.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    if days > 0:
+        uptime_str = f"{days}天 {hours}小时 {minutes}分钟"
+    elif hours > 0:
+        uptime_str = f"{hours}小时 {minutes}分钟"
+    else:
+        uptime_str = f"{minutes}分钟 {seconds}秒"
+
+    # 当前北京年份
+    beijing_year = beijing_now.year
+
+    return render_template(
+        'dashboard.html',
+        uptime=uptime_str,
+        health_checks=health_check_counter,
+        user_count=USER_NUM,
+        models=sorted(list(MODELS)),
+        year=beijing_year,
+        model_stats=model_usage_stats,
+        total_tokens=total_tokens,
+        compute_points=compute_points,
+        compute_points_log=compute_points_log,
+        space_url=SPACE_URL,  # 传递空间URL
+        users_compute_points=users_compute_points,  # 传递用户计算点信息
+        model_usage_records=model_usage_records  # 传递模型使用记录
+    )
+
+
+# 获取Hugging Face Space URL
+def get_space_url():
+    # 尝试从环境变量获取
+    space_url = os.environ.get("SPACE_URL")
+    if space_url:
+        return space_url
+    
+    # 如果SPACE_URL不存在，尝试从SPACE_ID构建
+    space_id = os.environ.get("SPACE_ID")
+    if space_id:
+        username, space_name = space_id.split("/")
+        return f"https://{username}-{space_name}.hf.space"
+    
+    # 如果以上都不存在，尝试从单独的用户名和空间名构建
+    username = os.environ.get("SPACE_USERNAME")
+    space_name = os.environ.get("SPACE_NAME")
+    if username and space_name:
+        return f"https://{username}-{space_name}.hf.space"
+    
+    # 默认返回None
+    return None
+
+# 获取空间URL
+SPACE_URL = get_space_url()
 
 
 if __name__ == "__main__":
     # 启动保活线程
     threading.Thread(target=keep_alive, daemon=True).start()
+    
+    # 加载历史模型调用记录
+    load_model_usage_records()
+    
+    # 获取初始计算点信息
+    get_compute_points()
+    
     port = int(os.environ.get("PORT", 9876))
     app.run(port=port, host="0.0.0.0")
