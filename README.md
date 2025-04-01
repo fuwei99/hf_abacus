@@ -26,8 +26,8 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 ### 正式版
 [![Deploy to Hugging Face Spaces](https://huggingface.co/datasets/huggingface/badges/raw/main/deploy-to-spaces-lg.svg)](https://huggingface.co/spaces/malt666/abacus_chat_proxy?duplicate=true)
 
-### 测试版
-[![Deploy to Hugging Face Spaces](https://huggingface.co/datasets/huggingface/badges/raw/main/deploy-to-spaces-lg.svg)](https://huggingface.co/spaces/malt666/abacus_proxy?duplicate=true)
+### 测试版（添加了防止截断，速度有所变慢，适合Gemini使用）
+[![Deploy to Hugging Face Spaces](https://huggingface.co/datasets/huggingface/badges/raw/main/deploy-to-spaces-lg.svg)](https://huggingface.co/spaces/malt666/abacus_procy?duplicate=true)
 
 
 ## ⚠️ 警告
