@@ -23,7 +23,12 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 
 #### 注意创建space的时候把private改为public，因为不改为public导致的错误别来找我
 
+### 正式版
 [![Deploy to Hugging Face Spaces](https://huggingface.co/datasets/huggingface/badges/raw/main/deploy-to-spaces-lg.svg)](https://huggingface.co/spaces/malt666/abacus_chat_proxy?duplicate=true)
+
+### 测试版
+[![Deploy to Hugging Face Spaces](https://huggingface.co/datasets/huggingface/badges/raw/main/deploy-to-spaces-lg.svg)](https://huggingface.co/spaces/malt666/abacus_proxy?duplicate=true)
+
 
 ## ⚠️ 警告
 
